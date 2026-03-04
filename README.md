@@ -41,4 +41,4 @@ As an open-source project, contributions targeting rendering optimizations, mult
 
 ## License
 
-This project is released as Open Source. Please see the accompanying license file (if present) for precise copyright and redistribution terms.
+This project is released as Open Source. Please see the accompanying license file **[LICENSE](LICENSE)** for precise copyright and redistribution terms.
