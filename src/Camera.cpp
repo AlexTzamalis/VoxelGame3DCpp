@@ -14,10 +14,73 @@ glm::mat4 Camera::projectionMatrix() const {
     return glm::perspective(glm::radians(fov_), aspect_, near_, far_);
 }
 
-void Camera::move(float dx, float dy, float dz) {
-    position_.x += dx;
-    position_.y += dy;
-    position_.z += dz;
+void Camera::jump(float velocity) {
+    if (isGrounded_) {
+        physicsVelocity_.y = velocity;
+        isGrounded_ = false;
+    }
+}
+
+void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>& checkCollisionFunc) {
+    // 1. Apply Gravity to Physics Velocity
+    physicsVelocity_.y -= 25.0f * deltaTime; // Gravity acceleration
+
+    // 2. Combine intentional player input with gravity
+    glm::vec3 targetVelocity = inputVelocity_ + physicsVelocity_;
+    glm::vec3 moveDelta = targetVelocity * deltaTime;
+
+    // We calculate "Player Base" position since position_ is our eye level
+    glm::vec3 playerBase = position_;
+    playerBase.y -= eyeOffsetY; 
+
+    // 3. Collision testing per axis (to allow sliding across walls)
+    // Create an AABB checking function
+    auto collides = [&](glm::vec3 pos) -> bool {
+        // Sample standard 8 corners of the bounding box
+        glm::vec3 minB = pos - boundingBoxHalfExtents_;
+        glm::vec3 maxB = pos + boundingBoxHalfExtents_;
+
+        for (float x = minB.x; x <= maxB.x; x += boundingBoxHalfExtents_.x * 2.0f) {
+            for (float y = minB.y; y <= maxB.y; y += boundingBoxHalfExtents_.y) {
+                for (float z = minB.z; z <= maxB.z; z += boundingBoxHalfExtents_.z * 2.0f) {
+                    if (checkCollisionFunc(glm::vec3(x, y, z))) return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // X-Axis Test
+    playerBase.x += moveDelta.x;
+    if (collides(playerBase)) {
+        playerBase.x -= moveDelta.x; // Revert
+        inputVelocity_.x = 0;
+    }
+
+    // Z-Axis Test
+    playerBase.z += moveDelta.z;
+    if (collides(playerBase)) {
+        playerBase.z -= moveDelta.z; // Revert
+        inputVelocity_.z = 0;
+    }
+
+    // Y-Axis Test
+    playerBase.y += moveDelta.y;
+    isGrounded_ = false;
+    if (collides(playerBase)) {
+        playerBase.y -= moveDelta.y; // Revert
+        if (moveDelta.y < 0) { // Hit the floor (falling down)
+            isGrounded_ = true;
+        }
+        physicsVelocity_.y = 0;
+    }
+
+    // 4. Finalize position
+    position_ = playerBase;
+    position_.y += eyeOffsetY; // Return to eye-level offset
+
+    // Decay purely intentional input movement instantly (like traditional WASD handling)
+    inputVelocity_ = glm::vec3(0.0f);
 }
 
 void Camera::rotate(float deltaYaw, float deltaPitch) {

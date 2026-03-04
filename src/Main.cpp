@@ -71,21 +71,26 @@ namespace {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        float speed = Config::playerSpeed * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed * deltaTime;
+        float speed = Config::playerSpeed;
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed;
 
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            camera.addPosition(camera.front() * speed);
+            camera.addVelocity(glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z)) * speed);
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            camera.addPosition(-camera.front() * speed);
+            camera.addVelocity(glm::normalize(glm::vec3(-camera.front().x, 0, -camera.front().z)) * speed);
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            camera.addPosition(-camera.right() * speed);
+            camera.addVelocity(-camera.right() * speed);
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            camera.addPosition(camera.right() * speed);
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-            camera.addPosition(glm::vec3(0.0f, 1.0f, 0.0f) * speed);
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-            camera.addPosition(glm::vec3(0.0f, -1.0f, 0.0f) * speed);
+            camera.addVelocity(camera.right() * speed);
+            
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            camera.jump(8.0f); // Fast Jump
+        }
+        
+        // Debug flight mode key if user gets stuck
+        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
+            camera.addVelocity(glm::vec3(0.0f, speed, 0.0f));
+        }
     }
 
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -176,6 +181,18 @@ int main() {
 
         atlas.bind(0);
         
+        // Calculate physics/AABB movement
+        auto checkCollisionCall = [&](glm::vec3 coordinate) -> bool {
+            int cx = std::floor(coordinate.x);
+            int cy = std::floor(coordinate.y);
+            int cz = std::floor(coordinate.z);
+            
+            uint8_t voxel = globalChunkManager->getVoxelGlobal(cx, cy, cz);
+            // Solid collision check - (0=Air, 1=Air, 5=Water) so anything > 1 && != 5 is solid!
+            return (voxel > 1 && voxel != 5); 
+        };
+        camera.applyPhysics(deltaTime, checkCollisionCall);
+
         // Update the Frustum boundary definitions based on currently moving camera coordinates
         camera.updateFrustum();
 

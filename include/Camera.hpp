@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <functional>
 
 struct Plane {
     glm::vec3 normal;
@@ -23,8 +24,11 @@ public:
     glm::vec3 right() const { return right_; }
     glm::vec3 up() const { return up_; }
 
-    void move(float dx, float dy, float dz);
-    void addPosition(glm::vec3 delta) { position_ += delta; }
+    void jump(float velocity);
+    void applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>& checkCollisionFunc);
+    
+    // Instead of raw move, player input pushes velocity now.
+    void addVelocity(glm::vec3 delta) { inputVelocity_ += delta; }
     void rotate(float deltaYaw, float deltaPitch);
     void setAspect(float aspect) { aspect_ = aspect; }
     void setFov(float fov) { fov_ = fov; }
@@ -41,6 +45,15 @@ private:
     glm::vec3 up_;
     glm::vec3 right_;
     glm::vec3 worldUp_;
+
+    glm::vec3 inputVelocity_{0.0f};
+    glm::vec3 physicsVelocity_{0.0f};
+    bool isGrounded_ = false;
+
+    // AABB half-extents (assuming camera is centered on a player roughly 0.6x1.8x0.6 in size)
+    // Eye level is at the top of the AABB
+    const glm::vec3 boundingBoxHalfExtents_ = glm::vec3(0.3f, 0.9f, 0.3f);
+    const float eyeOffsetY = 0.7f;
 
     float yaw_;
     float pitch_;
