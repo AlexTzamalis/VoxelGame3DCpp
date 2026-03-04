@@ -89,12 +89,14 @@ void Chunk::fillRandom() {
     for (int x = 0; x < CHUNK_SIZE; ++x) {
         for (int y = 0; y < CHUNK_SIZE; ++y) {
             for (int z = 0; z < CHUNK_SIZE; ++z) {
-                if (y < CHUNK_SIZE / 2) {
-                    setVoxel(x, y, z, 1); // 1 = Dirt/Grass
+                if (y < CHUNK_SIZE / 2 - 1) {
+                    setVoxel(x, y, z, 4); // 4 = Stone
+                } else if (y < CHUNK_SIZE / 2) {
+                    setVoxel(x, y, z, 3); // 3 = Dirt
                 } else if (y == CHUNK_SIZE / 2 && (x % 2 == 0 || z % 2 == 0)) {
-                    setVoxel(x, y, z, 2); // 2 = Stone, for variation
+                    setVoxel(x, y, z, 2); // 2 = Grass
                 } else {
-                    setVoxel(x, y, z, 0); // 0 = Air
+                    setVoxel(x, y, z, 1); // 1 = Air
                 }
             }
         }
@@ -105,19 +107,44 @@ bool Chunk::isFaceVisible(int x, int y, int z, int dx, int dy, int dz) const {
     int nx = x + dx;
     int ny = y + dy;
     int nz = z + dz;
-    return getVoxel(nx, ny, nz) == 0;
+    uint8_t neighbor = getVoxel(nx, ny, nz);
+    return neighbor == 0 || neighbor == 1; // 0 or 1 is air
 }
 
 void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
-    if (type == 0) return;
+    if (type <= 1) return; // Ignore air blocks
     
-    int startIdx = vertices_.size() / 8; // 8 floats per vertex
+    int startIdx = vertices_.size() / 11; // 11 floats per vertex (Pos, Norm, UV, Color)
 
-    // Atlas mappings based on 16x16 block configurations
-    // For type 1 (Dirt), UV col 1, row 15
-    // For type 2 (Stone), UV col 2, row 15
-    int tileX = type % 16;
-    int tileY = 15 - (type / 16); 
+    int tileX = 0;
+    int tileY = 15;
+    float r = 1.0f, g = 1.0f, b = 1.0f;
+
+    if (type == 2) { // Grass Block
+        if (dir == 2) { // +Y (Top Face)
+            tileX = 0; // 1st item in 2nd row (Grass Top Grayscale)
+            tileY = 14;
+            r = 0.35f; g = 0.75f; b = 0.25f; // Vibrant biome green tint
+        } else if (dir == 3) { // -Y (Bottom Face)
+            tileX = 2; // Dirt (3rd item in 1st row)
+            tileY = 15;
+        } else { // Sides
+            tileX = 1; // Grass Side (2nd item in 1st row)
+            tileY = 15;
+        }
+    } else if (type == 3) { // Dirt
+        tileX = 2;
+        tileY = 15;
+    } else if (type == 4) { // Stone
+        tileX = 3;
+        tileY = 15;
+    } else if (type == 5) { // Water
+        tileX = 1; // 2nd item in 2nd row
+        tileY = 14;
+    } else {
+        tileX = type % 16;
+        tileY = 15 - (type / 16);
+    }
     
     float u0 = tileX / 16.0f;
     float v0 = tileY / 16.0f;
@@ -147,6 +174,9 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         vertices_.push_back(nz);
         vertices_.push_back(u);
         vertices_.push_back(v);
+        vertices_.push_back(r);
+        vertices_.push_back(g);
+        vertices_.push_back(b);
     }
     
     indices_.push_back(startIdx + 0);
@@ -165,7 +195,7 @@ void Chunk::generateMesh() {
         for (int y = 0; y < CHUNK_SIZE; ++y) {
             for (int z = 0; z < CHUNK_SIZE; ++z) {
                 uint8_t type = getVoxel(x, y, z);
-                if (type != 0) {
+                if (type > 1) {
                     for (int i = 0; i < 6; ++i) {
                         if (isFaceVisible(x, y, z, DIRS[i][0], DIRS[i][1], DIRS[i][2])) {
                             addFace(x, y, z, i, type);
@@ -197,14 +227,17 @@ void Chunk::updateBuffers() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_.size() * sizeof(unsigned int), indices_.data(), GL_STATIC_DRAW);
     
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
+    
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(8 * sizeof(float)));
+    glEnableVertexAttribArray(3);
     
     glBindVertexArray(0);
     
