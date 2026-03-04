@@ -139,6 +139,9 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
@@ -190,14 +193,24 @@ int main() {
         atlas.bind(0);
         
         // Calculate physics/AABB movement
-        auto checkCollisionCall = [&](glm::vec3 coordinate) -> bool {
-            int cx = std::floor(coordinate.x);
-            int cy = std::floor(coordinate.y);
-            int cz = std::floor(coordinate.z);
+        auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
+            // Epsilon shrink to cleanly slide across block faces without getting snagged at float borders
+            int startX = std::floor(minB.x + 0.01f);
+            int endX   = std::floor(maxB.x - 0.01f);
+            int startY = std::floor(minB.y + 0.01f);
+            int endY   = std::floor(maxB.y - 0.01f);
+            int startZ = std::floor(minB.z + 0.01f);
+            int endZ   = std::floor(maxB.z - 0.01f);
             
-            uint8_t voxel = globalChunkManager->getVoxelGlobal(cx, cy, cz);
-            // Solid collision check - (0=Air, 1=Air, 5=Water) so anything > 1 && != 5 is solid!
-            return (voxel > 1 && voxel != 5); 
+            for (int x = startX; x <= endX; x++) {
+                for (int y = startY; y <= endY; y++) {
+                    for (int z = startZ; z <= endZ; z++) {
+                        uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
+                        if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                    }
+                }
+            }
+            return false;
         };
         camera.applyPhysics(deltaTime, checkCollisionCall);
 

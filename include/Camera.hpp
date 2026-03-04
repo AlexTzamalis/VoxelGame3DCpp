@@ -25,7 +25,7 @@ public:
     glm::vec3 up() const { return up_; }
 
     void jump(float velocity);
-    void applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>& checkCollisionFunc);
+    void applyPhysics(float deltaTime, const std::function<bool(glm::vec3, glm::vec3)>& checkCollisionFunc);
     
     // Instead of raw move, player input pushes velocity now.
     void addVelocity(glm::vec3 delta) { inputVelocity_ += delta; }

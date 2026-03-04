@@ -111,27 +111,30 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
 }
 
 void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) const {
-    // Render every currently loaded chunk
-    int chunksRendered = 0;
+    // 1. OPAQUE RENDER PASS
     for (const auto& [pos, chunk] : chunks_) {
-        // Calculate the bounding box of the chunk
         glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
         glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
-
-        if (Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) {
-            continue; // Skip rendering totally!
-        }
+        if (Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
         
-        chunksRendered++;
-
-        // Calculate the world position of the chunk
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, minBound);
-        
-        // Pass model matrix to the active shader
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         
         chunk->render();
+    }
+    
+    // 2. TRANSPARENT RENDER PASS (Water)
+    for (const auto& [pos, chunk] : chunks_) {
+        glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
+        glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
+        if (Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
+        
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, minBound);
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        chunk->renderWater();
     }
 }
 

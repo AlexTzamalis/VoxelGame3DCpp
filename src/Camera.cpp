@@ -21,7 +21,7 @@ void Camera::jump(float velocity) {
     }
 }
 
-void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>& checkCollisionFunc) {
+void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3, glm::vec3)>& checkCollisionFunc) {
     // 1. Apply Gravity to Physics Velocity
     physicsVelocity_.y -= 28.0f * deltaTime; // Gravity acceleration
 
@@ -34,20 +34,10 @@ void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>&
     playerBase.y -= eyeOffsetY; 
 
     // 3. Collision testing per axis (to allow sliding across walls)
-    // Create an AABB checking function
     auto collides = [&](glm::vec3 pos) -> bool {
-        // Sample standard 8 corners of the bounding box
         glm::vec3 minB = pos - boundingBoxHalfExtents_;
         glm::vec3 maxB = pos + boundingBoxHalfExtents_;
-
-        for (float x = minB.x; x <= maxB.x; x += boundingBoxHalfExtents_.x * 2.0f) {
-            for (float y = minB.y; y <= maxB.y; y += boundingBoxHalfExtents_.y) {
-                for (float z = minB.z; z <= maxB.z; z += boundingBoxHalfExtents_.z * 2.0f) {
-                    if (checkCollisionFunc(glm::vec3(x, y, z))) return true;
-                }
-            }
-        }
-        return false;
+        return checkCollisionFunc(minB, maxB);
     };
 
     // X-Axis Test

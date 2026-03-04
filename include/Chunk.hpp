@@ -7,6 +7,7 @@
 class Chunk {
 public:
     static const int CHUNK_SIZE = 16;
+    static const int PADDED_SIZE = 18; // Includes 1-block neighbor padding
     
     Chunk(glm::ivec3 position);
     ~Chunk();
@@ -22,6 +23,7 @@ public:
     
     // Rendering
     void render() const;
+    void renderWater() const;
 
     glm::ivec3 getPosition() const { return position_; }
 
@@ -36,6 +38,7 @@ private:
     // Mesh data
     std::vector<float> vertices_;
     std::vector<unsigned int> indices_;
+    std::vector<unsigned int> waterIndices_;
     
     // OpenGL buffers
     unsigned int vao_ = 0;
@@ -44,4 +47,5 @@ private:
     
     bool bufferNeedsUpdate_ = false;
     unsigned int indexCount_ = 0;
+    unsigned int waterIndexCount_ = 0;
 };
