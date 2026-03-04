@@ -57,7 +57,7 @@ const float FACE_VERTICES[6][4][8] = {
 
 Chunk::Chunk(glm::ivec3 position) : position_(position) {
     voxels_.resize(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE, 0);
-    fillRandom();
+    // Generation logic is now handled fully by ChunkManager via generateTerrain
 }
 
 Chunk::~Chunk() {
@@ -85,18 +85,37 @@ void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
     }
 }
 
-void Chunk::fillRandom() {
+void Chunk::generateTerrain(FastNoiseLite& noise) {
     for (int x = 0; x < CHUNK_SIZE; ++x) {
-        for (int y = 0; y < CHUNK_SIZE; ++y) {
-            for (int z = 0; z < CHUNK_SIZE; ++z) {
-                if (y < CHUNK_SIZE / 2 - 1) {
-                    setVoxel(x, y, z, 4); // 4 = Stone
-                } else if (y < CHUNK_SIZE / 2) {
-                    setVoxel(x, y, z, 3); // 3 = Dirt
-                } else if (y == CHUNK_SIZE / 2 && (x % 2 == 0 || z % 2 == 0)) {
-                    setVoxel(x, y, z, 2); // 2 = Grass
-                } else {
-                    setVoxel(x, y, z, 1); // 1 = Air
+        for (int z = 0; z < CHUNK_SIZE; ++z) {
+            float globalX = position_.x * CHUNK_SIZE + x;
+            float globalZ = position_.z * CHUNK_SIZE + z;
+            
+            // FastNoiseLite inherently outputs roughly between [-1.0f, 1.0f]
+            // We shift it up to 0->1, multiply it by 10 blocks vertical scale, and base it on 4 stone layers.
+            float noiseHeight = noise.GetNoise(globalX, globalZ);
+            int height = static_cast<int>((noiseHeight + 1.0f) * 0.5f * 10.0f) + 4;
+
+            for (int y = 0; y < CHUNK_SIZE; ++y) {
+                int globalY = position_.y * CHUNK_SIZE + y;
+                
+                // Solid ground level
+                if (globalY < height) {
+                    if (globalY == height - 1) {
+                        setVoxel(x, y, z, 2); // Surface Grass
+                    } else if (globalY > height - 4) {
+                        setVoxel(x, y, z, 3); // Sub-Surface Dirt
+                    } else {
+                        setVoxel(x, y, z, 4); // Deep Stone
+                    }
+                } 
+                // Any empty voxels below Sea Level (which is 6 blocks high globally) become Water
+                else if (globalY <= 6) { 
+                    setVoxel(x, y, z, 5); // Water
+                } 
+                // Actual atmospheric void
+                else {
+                    setVoxel(x, y, z, 1); // Transparent Air
                 }
             }
         }

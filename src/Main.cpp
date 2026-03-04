@@ -1,7 +1,7 @@
 #include "Camera.hpp"
 #include "Shader.hpp"
 #include "Texture.hpp"
-#include "Chunk.hpp"
+#include "ChunkManager.hpp"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -102,13 +102,11 @@ int main() {
     }
 
     Texture atlas;
-    if (!atlas.loadFromFile("assets/textures-atlas.png")) {
+    if (!atlas.loadFromFile("assets/sprite-atlas-1.png")) {
         std::cerr << "Texture atlas not found. Run from build directory.\n";
     }
 
-    Chunk chunk(glm::ivec3(0, 0, 0));
-    chunk.generateMesh();
-    chunk.updateBuffers();
+    ChunkManager chunkManager;
 
     camera.setAspect(static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight));
 
@@ -118,16 +116,13 @@ int main() {
         lastFrame = currentFrame;
 
         processInput(window);
+        chunkManager.update(camera.position());
 
         glClearColor(0.2f, 0.3f, 0.4f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         shader.use();
         
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(chunk.getPosition() * Chunk::CHUNK_SIZE));
-        
-        shader.setMat4("model", model);
         shader.setMat4("view", camera.viewMatrix());
         shader.setMat4("projection", camera.projectionMatrix());
         shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
@@ -135,7 +130,9 @@ int main() {
         shader.setInt("textureAtlas", 0);
 
         atlas.bind(0);
-        chunk.render();
+        
+        // Pass the actual ID of the shader because ChunkManager uploads the 'model' matrix uniform directly inside the loop based on each unique chunk position!
+        chunkManager.render(shader.id());
 
         glfwSwapBuffers(window);
         glfwPollEvents();
