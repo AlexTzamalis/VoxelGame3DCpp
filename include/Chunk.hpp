@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <glm/glm.hpp>
+#include "FastNoiseLite.h"
 
 class Chunk {
 public:
@@ -15,7 +16,7 @@ public:
     void setVoxel(int x, int y, int z, uint8_t type);
 
     // Initialization and updates
-    void fillRandom();
+    void generateTerrain(FastNoiseLite& noise);
     void generateMesh();
     void updateBuffers();
     
