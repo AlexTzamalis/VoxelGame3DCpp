@@ -19,6 +19,46 @@ namespace {
     bool firstMouse = true;
 
     Camera camera(glm::vec3(0.0f, 15.0f, 5.0f));
+    ChunkManager* globalChunkManager = nullptr;
+
+    bool raycast(glm::vec3 start, glm::vec3 direction, float maxDistance, glm::ivec3& hitPos, glm::ivec3& prevPos) {
+        glm::vec3 current = start;
+        glm::vec3 step = direction * 0.05f; 
+        
+        glm::ivec3 lastIntPos(std::floor(current.x), std::floor(current.y), std::floor(current.z));
+        float distance = 0.0f;
+
+        while (distance < maxDistance) {
+            current += step;
+            distance += 0.05f;
+            
+            glm::ivec3 intPos(std::floor(current.x), std::floor(current.y), std::floor(current.z));
+            
+            if (intPos != lastIntPos) {
+                uint8_t voxel = globalChunkManager->getVoxelGlobal(intPos.x, intPos.y, intPos.z);
+                if (voxel > 1 && voxel != 5) { // Solid blocks only (ignore transparent Air=1 and Water=5)
+                    hitPos = intPos;
+                    prevPos = lastIntPos;
+                    return true;
+                }
+                lastIntPos = intPos;
+            }
+        }
+        return false;
+    }
+
+    void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+        if (action == GLFW_PRESS && globalChunkManager != nullptr) {
+            glm::ivec3 hitPos, prevPos;
+            if (raycast(camera.position(), camera.front(), 8.0f, hitPos, prevPos)) {
+                if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                    globalChunkManager->setVoxelGlobal(hitPos.x, hitPos.y, hitPos.z, 1); // 1 = Air
+                } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                    globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, 4); // 4 = Stone
+                }
+            }
+        }
+    }
 
     void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
         glViewport(0, 0, width, height);
@@ -82,6 +122,7 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
     glfwSetCursorPosCallback(window, mouseCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     if (glewInit() != GLEW_OK) {
@@ -109,6 +150,7 @@ int main() {
     }
 
     ChunkManager chunkManager;
+    globalChunkManager = &chunkManager;
 
     camera.setAspect(static_cast<float>(Config::windowWidth) / static_cast<float>(Config::windowHeight));
     camera.setFov(Config::cameraFov);

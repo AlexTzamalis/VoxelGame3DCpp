@@ -32,6 +32,9 @@ public:
     void update(const glm::vec3& cameraPosition);
     void render(unsigned int shaderProgram, const Camera& camera) const;
 
+    uint8_t getVoxelGlobal(int x, int y, int z) const;
+    void setVoxelGlobal(int x, int y, int z, uint8_t type);
+
 private:
     void workerThreadFunc();
 

@@ -134,3 +134,38 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) cons
         chunk->render();
     }
 }
+
+uint8_t ChunkManager::getVoxelGlobal(int x, int y, int z) const {
+    int cx = std::floor(static_cast<float>(x) / Chunk::CHUNK_SIZE);
+    int cy = std::floor(static_cast<float>(y) / Chunk::CHUNK_SIZE);
+    int cz = std::floor(static_cast<float>(z) / Chunk::CHUNK_SIZE);
+    
+    glm::ivec3 cPos(cx, cy, cz);
+    auto it = chunks_.find(cPos);
+    if (it != chunks_.end()) {
+        int lx = x - cx * Chunk::CHUNK_SIZE;
+        int ly = y - cy * Chunk::CHUNK_SIZE;
+        int lz = z - cz * Chunk::CHUNK_SIZE;
+        return it->second->getVoxel(lx, ly, lz);
+    }
+    return 0; // Air outside
+}
+
+void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
+    int cx = std::floor(static_cast<float>(x) / Chunk::CHUNK_SIZE);
+    int cy = std::floor(static_cast<float>(y) / Chunk::CHUNK_SIZE);
+    int cz = std::floor(static_cast<float>(z) / Chunk::CHUNK_SIZE);
+    
+    glm::ivec3 cPos(cx, cy, cz);
+    auto it = chunks_.find(cPos);
+    if (it != chunks_.end()) {
+        int lx = x - cx * Chunk::CHUNK_SIZE;
+        int ly = y - cy * Chunk::CHUNK_SIZE;
+        int lz = z - cz * Chunk::CHUNK_SIZE;
+        it->second->setVoxel(lx, ly, lz, type);
+        
+        // Rebuild the mesh instantly on main thread for instantaneous player feedback
+        it->second->generateMesh();
+        it->second->updateBuffers();
+    }
+}
