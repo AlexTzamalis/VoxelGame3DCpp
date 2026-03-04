@@ -13,4 +13,5 @@ namespace Config {
 
     int renderDistance = 8; // Radiates out in a grid. E.g. Distance 4 = 9x9 grid = 81 Chunks.
     bool frustumCulling = true; // Future toggle
+    float fogDensity = 0.015f; // Exponential fog density
 }

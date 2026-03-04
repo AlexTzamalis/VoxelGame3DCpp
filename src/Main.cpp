@@ -71,21 +71,26 @@ namespace {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        float speed = Config::playerSpeed * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed * deltaTime;
+        float speed = Config::playerSpeed;
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed;
 
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            camera.addPosition(camera.front() * speed);
+            camera.addVelocity(glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z)) * speed);
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            camera.addPosition(-camera.front() * speed);
+            camera.addVelocity(glm::normalize(glm::vec3(-camera.front().x, 0, -camera.front().z)) * speed);
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            camera.addPosition(-camera.right() * speed);
+            camera.addVelocity(-camera.right() * speed);
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            camera.addPosition(camera.right() * speed);
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-            camera.addPosition(glm::vec3(0.0f, 1.0f, 0.0f) * speed);
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-            camera.addPosition(glm::vec3(0.0f, -1.0f, 0.0f) * speed);
+            camera.addVelocity(camera.right() * speed);
+            
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            camera.jump(8.5f); // Fast Parabolic Jump
+        }
+        
+        // Debug flight mode key if user gets stuck
+        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
+            camera.addVelocity(glm::vec3(0.0f, speed, 0.0f));
+        }
     }
 
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -134,6 +139,9 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
@@ -163,19 +171,49 @@ int main() {
         processInput(window);
         chunkManager.update(camera.position());
 
-        glClearColor(0.2f, 0.3f, 0.4f, 1.0f);
+        // Use a much brighter, natural-looking sky color
+        glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
+        glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         shader.use();
         
         shader.setMat4("view", camera.viewMatrix());
         shader.setMat4("projection", camera.projectionMatrix());
+        
+        // Pass essential sky and fog values to the GPU
+        shader.setVec3("cameraPos", camera.position());
+        shader.setVec3("skyColor", skyColor);
+        shader.setFloat("fogDensity", Config::fogDensity);
+
         shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
         shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
         shader.setInt("textureAtlas", 0);
 
         atlas.bind(0);
         
+        // Calculate physics/AABB movement
+        auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
+            // Epsilon shrink to cleanly slide across block faces without getting snagged at float borders
+            int startX = std::floor(minB.x + 0.01f);
+            int endX   = std::floor(maxB.x - 0.01f);
+            int startY = std::floor(minB.y + 0.01f);
+            int endY   = std::floor(maxB.y - 0.01f);
+            int startZ = std::floor(minB.z + 0.01f);
+            int endZ   = std::floor(maxB.z - 0.01f);
+            
+            for (int x = startX; x <= endX; x++) {
+                for (int y = startY; y <= endY; y++) {
+                    for (int z = startZ; z <= endZ; z++) {
+                        uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
+                        if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                    }
+                }
+            }
+            return false;
+        };
+        camera.applyPhysics(deltaTime, checkCollisionCall);
+
         // Update the Frustum boundary definitions based on currently moving camera coordinates
         camera.updateFrustum();
 

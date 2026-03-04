@@ -56,7 +56,7 @@ const float FACE_VERTICES[6][4][8] = {
 };
 
 Chunk::Chunk(glm::ivec3 position) : position_(position) {
-    voxels_.resize(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE, 0);
+    voxels_.resize(PADDED_SIZE * PADDED_SIZE * PADDED_SIZE, 0);
     // Generation logic is now handled fully by ChunkManager via generateTerrain
 }
 
@@ -69,25 +69,25 @@ Chunk::~Chunk() {
 }
 
 int Chunk::getIndex(int x, int y, int z) const {
-    return x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE;
+    return (x + 1) + (y + 1) * PADDED_SIZE + (z + 1) * PADDED_SIZE * PADDED_SIZE;
 }
 
 uint8_t Chunk::getVoxel(int x, int y, int z) const {
-    if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) {
+    if (x < -1 || x > CHUNK_SIZE || y < -1 || y > CHUNK_SIZE || z < -1 || z > CHUNK_SIZE) {
         return 0; // Air outside
     }
     return voxels_[getIndex(x, y, z)];
 }
 
 void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
-    if (x >= 0 && x < CHUNK_SIZE && y >= 0 && y < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
+    if (x >= -1 && x <= CHUNK_SIZE && y >= -1 && y <= CHUNK_SIZE && z >= -1 && z <= CHUNK_SIZE) {
         voxels_[getIndex(x, y, z)] = type;
     }
 }
 
 void Chunk::generateTerrain(FastNoiseLite& noise) {
-    for (int x = 0; x < CHUNK_SIZE; ++x) {
-        for (int z = 0; z < CHUNK_SIZE; ++z) {
+    for (int x = -1; x <= CHUNK_SIZE; ++x) {
+        for (int z = -1; z <= CHUNK_SIZE; ++z) {
             float globalX = position_.x * CHUNK_SIZE + x;
             float globalZ = position_.z * CHUNK_SIZE + z;
             
@@ -96,7 +96,7 @@ void Chunk::generateTerrain(FastNoiseLite& noise) {
             float noiseHeight = noise.GetNoise(globalX, globalZ);
             int height = static_cast<int>((noiseHeight + 1.0f) * 0.5f * 10.0f) + 4;
 
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
                 int globalY = position_.y * CHUNK_SIZE + y;
                 
                 // Solid ground level
@@ -133,11 +133,11 @@ bool Chunk::isFaceVisible(int x, int y, int z, int dx, int dy, int dz) const {
 void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
     if (type <= 1) return; // Ignore air blocks
     
-    int startIdx = vertices_.size() / 11; // 11 floats per vertex (Pos, Norm, UV, Color)
+    int startIdx = vertices_.size() / 12; // 12 floats per vertex (Pos, Norm, UV, Color+Alpha)
 
     int tileX = 0;
     int tileY = 15;
-    float r = 1.0f, g = 1.0f, b = 1.0f;
+    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 
     if (type == 2) { // Grass Block
         if (dir == 2) { // +Y (Top Face)
@@ -160,6 +160,7 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
     } else if (type == 5) { // Water
         tileX = 1; // 2nd item in 2nd row
         tileY = 14;
+        a = 0.7f; // Transparent opacity!
     } else {
         tileX = type % 16;
         tileY = 15 - (type / 16);
@@ -174,6 +175,11 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         float vx = FACE_VERTICES[dir][i][0] + x;
         float vy = FACE_VERTICES[dir][i][1] + y;
         float vz = FACE_VERTICES[dir][i][2] + z;
+        
+        // Lower the mesh height of water top faces to separate it elegantly from shores
+        if (type == 5 && FACE_VERTICES[dir][i][1] > 0.0f) {
+            vy -= 0.15f;
+        }
         
         float nx = FACE_VERTICES[dir][i][3];
         float ny = FACE_VERTICES[dir][i][4];
@@ -196,19 +202,30 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         vertices_.push_back(r);
         vertices_.push_back(g);
         vertices_.push_back(b);
+        vertices_.push_back(a);
     }
     
-    indices_.push_back(startIdx + 0);
-    indices_.push_back(startIdx + 1);
-    indices_.push_back(startIdx + 2);
-    indices_.push_back(startIdx + 0);
-    indices_.push_back(startIdx + 2);
-    indices_.push_back(startIdx + 3);
+    if (type == 5) { // Route to correct index buffer
+        waterIndices_.push_back(startIdx + 0);
+        waterIndices_.push_back(startIdx + 1);
+        waterIndices_.push_back(startIdx + 2);
+        waterIndices_.push_back(startIdx + 0);
+        waterIndices_.push_back(startIdx + 2);
+        waterIndices_.push_back(startIdx + 3);
+    } else {
+        indices_.push_back(startIdx + 0);
+        indices_.push_back(startIdx + 1);
+        indices_.push_back(startIdx + 2);
+        indices_.push_back(startIdx + 0);
+        indices_.push_back(startIdx + 2);
+        indices_.push_back(startIdx + 3);
+    }    
 }
 
 void Chunk::generateMesh() {
     vertices_.clear();
     indices_.clear();
+    waterIndices_.clear();
 
     for (int x = 0; x < CHUNK_SIZE; ++x) {
         for (int y = 0; y < CHUNK_SIZE; ++y) {
@@ -226,6 +243,7 @@ void Chunk::generateMesh() {
     }
     
     indexCount_ = indices_.size();
+    waterIndexCount_ = waterIndices_.size();
     bufferNeedsUpdate_ = true;
 }
 
@@ -243,19 +261,23 @@ void Chunk::updateBuffers() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, vertices_.size() * sizeof(float), vertices_.data(), GL_STATIC_DRAW);
     
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_.size() * sizeof(unsigned int), indices_.data(), GL_STATIC_DRAW);
+    // Upload both sets sequentially
+    std::vector<unsigned int> allIndices = indices_;
+    allIndices.insert(allIndices.end(), waterIndices_.begin(), waterIndices_.end());
     
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 12 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 12 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(6 * sizeof(float)));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 12 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
     
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(8 * sizeof(float)));
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 12 * sizeof(float), (void*)(8 * sizeof(float)));
     glEnableVertexAttribArray(3);
     
     glBindVertexArray(0);
@@ -267,6 +289,14 @@ void Chunk::render() const {
     if (indexCount_ > 0 && vao_ != 0) {
         glBindVertexArray(vao_);
         glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    }
+}
+
+void Chunk::renderWater() const {
+    if (waterIndexCount_ > 0 && vao_ != 0) {
+        glBindVertexArray(vao_);
+        glDrawElements(GL_TRIANGLES, waterIndexCount_, GL_UNSIGNED_INT, (void*)(indexCount_ * sizeof(unsigned int)));
         glBindVertexArray(0);
     }
 }
