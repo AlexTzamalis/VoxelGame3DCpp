@@ -3,6 +3,15 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+struct Plane {
+    glm::vec3 normal;
+    float distance;
+};
+
+struct Frustum {
+    Plane planes[6];
+};
+
 class Camera {
 public:
     Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f),
@@ -21,6 +30,9 @@ public:
     void setFov(float fov) { fov_ = fov; }
     glm::mat4 projectionMatrix() const;
 
+    void updateFrustum();
+    bool isBoxInFrustum(const glm::vec3& min, const glm::vec3& max) const;
+
 private:
     void updateVectors();
 
@@ -36,4 +48,6 @@ private:
     float fov_ = 60.0f;
     float near_ = 0.1f;
     float far_ = 1000.0f;
+
+    Frustum frustum_;
 };

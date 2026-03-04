@@ -67,6 +67,7 @@ add_executable(VoxelGame3D
     src/Texture.cpp
     src/Chunk.cpp
     src/ChunkManager.cpp
+    src/Config.cpp
     src/stb_image_impl.cpp
 )
 
