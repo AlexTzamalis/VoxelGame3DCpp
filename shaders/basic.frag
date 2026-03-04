@@ -2,7 +2,7 @@
 in vec2 TexCoord;
 in vec3 Normal;
 in vec3 FragPos;
-in vec3 VertexColor;
+in vec4 VertexColor;
 
 out vec4 FragColor;
 
@@ -17,7 +17,7 @@ uniform float fogDensity;
 
 void main() {
     vec4 texColor = texture(textureAtlas, TexCoord);
-    texColor.rgb *= VertexColor;
+    texColor *= VertexColor; // Applies RGB biome tint AND the alpha channel (0.7f for water)
     float diff = max(dot(normalize(Normal), normalize(-lightDir)), 0.0);
     vec3 diffuse = diff * lightColor;
     vec3 ambient = 0.3 * lightColor;

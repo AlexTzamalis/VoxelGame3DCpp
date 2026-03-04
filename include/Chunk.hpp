@@ -29,7 +29,7 @@ public:
 
 private:
     int getIndex(int x, int y, int z) const;
-    bool isFaceVisible(int x, int y, int z, int dx, int dy, int dz) const;
+    bool isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int dy, int dz) const;
     void addFace(int x, int y, int z, int dir, uint8_t type);
 
     glm::ivec3 position_;

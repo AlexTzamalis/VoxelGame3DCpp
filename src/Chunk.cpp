@@ -122,12 +122,20 @@ void Chunk::generateTerrain(FastNoiseLite& noise) {
     }
 }
 
-bool Chunk::isFaceVisible(int x, int y, int z, int dx, int dy, int dz) const {
+bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int dy, int dz) const {
     int nx = x + dx;
     int ny = y + dy;
     int nz = z + dz;
     uint8_t neighbor = getVoxel(nx, ny, nz);
-    return neighbor == 0 || neighbor == 1; // 0 or 1 is air
+    
+    // Always render faces exposed to air/void
+    if (neighbor == 0 || neighbor == 1) return true;
+    
+    // Solid blocks MUST render their faces when touching transparent water
+    // This prevents the user from seeing "through" the shore into the void!
+    if (currentType != 5 && neighbor == 5) return true;
+    
+    return false;
 }
 
 void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
@@ -233,7 +241,7 @@ void Chunk::generateMesh() {
                 uint8_t type = getVoxel(x, y, z);
                 if (type > 1) {
                     for (int i = 0; i < 6; ++i) {
-                        if (isFaceVisible(x, y, z, DIRS[i][0], DIRS[i][1], DIRS[i][2])) {
+                        if (isFaceVisible(type, x, y, z, DIRS[i][0], DIRS[i][1], DIRS[i][2])) {
                             addFace(x, y, z, i, type);
                         }
                     }

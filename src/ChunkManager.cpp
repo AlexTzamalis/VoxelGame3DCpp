@@ -5,13 +5,6 @@
 #include <GL/glew.h>
 
 ChunkManager::ChunkManager() : isRunning_(true) {
-    // Configure FastNoiseLite for smooth, natural terrain
-    noise_.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-    noise_.SetSeed(1337); 
-    noise_.SetFrequency(0.02f);       // Determines width / scale of hills
-    noise_.SetFractalType(FastNoiseLite::FractalType_FBm);
-    noise_.SetFractalOctaves(4);      // Detail levels
-
     // Launch worker threads
     int numThreads = std::thread::hardware_concurrency() - 1;
     if (numThreads <= 0) numThreads = 1;
@@ -42,9 +35,17 @@ void ChunkManager::workerThreadFunc() {
             pendingTasks_.pop();
         }
 
+        // Configure FastNoiseLite uniquely per thread to prevent math corruption at chunk borders
+        FastNoiseLite localNoise;
+        localNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+        localNoise.SetSeed(1337); 
+        localNoise.SetFrequency(0.02f);       
+        localNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+        localNoise.SetFractalOctaves(4);      
+
         // Heavy Lifting off the main thread
         auto chunk = std::make_unique<Chunk>(taskPos);
-        chunk->generateTerrain(noise_); 
+        chunk->generateTerrain(localNoise); 
         chunk->generateMesh();
 
         // Push finished chunk back safely
