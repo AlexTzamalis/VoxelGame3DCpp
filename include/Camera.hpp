@@ -50,10 +50,10 @@ private:
     glm::vec3 physicsVelocity_{0.0f};
     bool isGrounded_ = false;
 
-    // AABB half-extents (assuming camera is centered on a player roughly 0.6x1.8x0.6 in size)
+    // AABB half-extents (assuming camera is centered on a player roughly 0.6x1.5x0.6 in size)
     // Eye level is at the top of the AABB
-    const glm::vec3 boundingBoxHalfExtents_ = glm::vec3(0.3f, 0.9f, 0.3f);
-    const float eyeOffsetY = 0.7f;
+    const glm::vec3 boundingBoxHalfExtents_ = glm::vec3(0.3f, 0.75f, 0.3f);
+    const float eyeOffsetY = 0.6f;
 
     float yaw_;
     float pitch_;

@@ -84,7 +84,7 @@ namespace {
             camera.addVelocity(camera.right() * speed);
             
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            camera.jump(8.0f); // Fast Jump
+            camera.jump(8.5f); // Fast Parabolic Jump
         }
         
         // Debug flight mode key if user gets stuck
@@ -168,13 +168,21 @@ int main() {
         processInput(window);
         chunkManager.update(camera.position());
 
-        glClearColor(0.2f, 0.3f, 0.4f, 1.0f);
+        // Use a much brighter, natural-looking sky color
+        glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
+        glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         shader.use();
         
         shader.setMat4("view", camera.viewMatrix());
         shader.setMat4("projection", camera.projectionMatrix());
+        
+        // Pass essential sky and fog values to the GPU
+        shader.setVec3("cameraPos", camera.position());
+        shader.setVec3("skyColor", skyColor);
+        shader.setFloat("fogDensity", Config::fogDensity);
+
         shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
         shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
         shader.setInt("textureAtlas", 0);

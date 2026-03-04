@@ -15,4 +15,5 @@ namespace Config {
     // World & Rendering Settings
     extern int renderDistance;
     extern bool frustumCulling;
+    extern float fogDensity;
 }

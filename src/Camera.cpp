@@ -23,7 +23,7 @@ void Camera::jump(float velocity) {
 
 void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3)>& checkCollisionFunc) {
     // 1. Apply Gravity to Physics Velocity
-    physicsVelocity_.y -= 25.0f * deltaTime; // Gravity acceleration
+    physicsVelocity_.y -= 28.0f * deltaTime; // Gravity acceleration
 
     // 2. Combine intentional player input with gravity
     glm::vec3 targetVelocity = inputVelocity_ + physicsVelocity_;
