@@ -36,3 +36,63 @@ void Camera::updateVectors() {
     right_ = glm::normalize(glm::cross(front_, worldUp_));
     up_ = glm::normalize(glm::cross(right_, front_));
 }
+
+void Camera::updateFrustum() {
+    glm::mat4 viewProj = projectionMatrix() * viewMatrix();
+
+    // Left
+    frustum_.planes[0].normal.x = viewProj[0][3] + viewProj[0][0];
+    frustum_.planes[0].normal.y = viewProj[1][3] + viewProj[1][0];
+    frustum_.planes[0].normal.z = viewProj[2][3] + viewProj[2][0];
+    frustum_.planes[0].distance = viewProj[3][3] + viewProj[3][0];
+
+    // Right
+    frustum_.planes[1].normal.x = viewProj[0][3] - viewProj[0][0];
+    frustum_.planes[1].normal.y = viewProj[1][3] - viewProj[1][0];
+    frustum_.planes[1].normal.z = viewProj[2][3] - viewProj[2][0];
+    frustum_.planes[1].distance = viewProj[3][3] - viewProj[3][0];
+
+    // Bottom
+    frustum_.planes[2].normal.x = viewProj[0][3] + viewProj[0][1];
+    frustum_.planes[2].normal.y = viewProj[1][3] + viewProj[1][1];
+    frustum_.planes[2].normal.z = viewProj[2][3] + viewProj[2][1];
+    frustum_.planes[2].distance = viewProj[3][3] + viewProj[3][1];
+
+    // Top
+    frustum_.planes[3].normal.x = viewProj[0][3] - viewProj[0][1];
+    frustum_.planes[3].normal.y = viewProj[1][3] - viewProj[1][1];
+    frustum_.planes[3].normal.z = viewProj[2][3] - viewProj[2][1];
+    frustum_.planes[3].distance = viewProj[3][3] - viewProj[3][1];
+
+    // Near
+    frustum_.planes[4].normal.x = viewProj[0][3] + viewProj[0][2];
+    frustum_.planes[4].normal.y = viewProj[1][3] + viewProj[1][2];
+    frustum_.planes[4].normal.z = viewProj[2][3] + viewProj[2][2];
+    frustum_.planes[4].distance = viewProj[3][3] + viewProj[3][2];
+
+    // Far
+    frustum_.planes[5].normal.x = viewProj[0][3] - viewProj[0][2];
+    frustum_.planes[5].normal.y = viewProj[1][3] - viewProj[1][2];
+    frustum_.planes[5].normal.z = viewProj[2][3] - viewProj[2][2];
+    frustum_.planes[5].distance = viewProj[3][3] - viewProj[3][2];
+
+    for (int i = 0; i < 6; i++) {
+        float length = glm::length(frustum_.planes[i].normal);
+        frustum_.planes[i].normal /= length;
+        frustum_.planes[i].distance /= length;
+    }
+}
+
+bool Camera::isBoxInFrustum(const glm::vec3& min, const glm::vec3& max) const {
+    for (int i = 0; i < 6; i++) {
+        glm::vec3 p = min;
+        if (frustum_.planes[i].normal.x >= 0) p.x = max.x;
+        if (frustum_.planes[i].normal.y >= 0) p.y = max.y;
+        if (frustum_.planes[i].normal.z >= 0) p.z = max.z;
+
+        if (glm::dot(frustum_.planes[i].normal, p) + frustum_.planes[i].distance < 0) {
+            return false;
+        }
+    }
+    return true;
+}

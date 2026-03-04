@@ -2,6 +2,7 @@
 #include "Shader.hpp"
 #include "Texture.hpp"
 #include "ChunkManager.hpp"
+#include "Config.hpp"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -11,19 +12,18 @@
 #include <cmath>
 
 namespace {
-    const int kWindowWidth = 1280;
-    const int kWindowHeight = 720;
-
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
-    float lastX = kWindowWidth / 2.0f;
-    float lastY = kWindowHeight / 2.0f;
+    float lastX = Config::windowWidth / 2.0f;
+    float lastY = Config::windowHeight / 2.0f;
     bool firstMouse = true;
 
-    Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
+    Camera camera(glm::vec3(0.0f, 15.0f, 5.0f));
 
     void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
         glViewport(0, 0, width, height);
+        Config::windowWidth = width;
+        Config::windowHeight = height;
         camera.setAspect(static_cast<float>(width) / static_cast<float>(height));
     }
 
@@ -31,7 +31,9 @@ namespace {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        const float speed = 5.0f * deltaTime;
+        float speed = Config::playerSpeed * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed * deltaTime;
+
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
             camera.addPosition(camera.front() * speed);
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -56,7 +58,7 @@ namespace {
         float dy = lastY - static_cast<float>(ypos);
         lastX = static_cast<float>(xpos);
         lastY = static_cast<float>(ypos);
-        camera.rotate(dx * 0.1f, dy * 0.1f);
+        camera.rotate(dx * Config::mouseSensitivity, dy * Config::mouseSensitivity);
     }
 }
 
@@ -70,7 +72,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight, "Voxel Game 3D", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(Config::windowWidth, Config::windowHeight, "Voxel Game 3D", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -108,7 +110,8 @@ int main() {
 
     ChunkManager chunkManager;
 
-    camera.setAspect(static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight));
+    camera.setAspect(static_cast<float>(Config::windowWidth) / static_cast<float>(Config::windowHeight));
+    camera.setFov(Config::cameraFov);
 
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -131,8 +134,11 @@ int main() {
 
         atlas.bind(0);
         
-        // Pass the actual ID of the shader because ChunkManager uploads the 'model' matrix uniform directly inside the loop based on each unique chunk position!
-        chunkManager.render(shader.id());
+        // Update the Frustum boundary definitions based on currently moving camera coordinates
+        camera.updateFrustum();
+
+        // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
+        chunkManager.render(shader.id(), camera);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
