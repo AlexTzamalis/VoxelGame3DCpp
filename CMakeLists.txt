@@ -65,6 +65,7 @@ add_executable(VoxelGame3D
     src/Shader.cpp
     src/Camera.cpp
     src/Texture.cpp
+    src/Chunk.cpp
     src/stb_image_impl.cpp
 )
 
@@ -82,5 +83,12 @@ target_link_libraries(VoxelGame3D PRIVATE
 )
 
 # Copy assets and shaders to build dir so paths work when running from build
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/shaders DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+add_custom_command(
+    TARGET VoxelGame3D POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+        ${CMAKE_CURRENT_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        ${CMAKE_CURRENT_BINARY_DIR}/assets
+)

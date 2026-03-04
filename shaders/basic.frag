@@ -6,13 +6,11 @@ in vec3 FragPos;
 out vec4 FragColor;
 
 uniform sampler2D textureAtlas;
-uniform vec2 atlasTileSize;
-uniform vec2 atlasOffset;
 uniform vec3 lightDir;
 uniform vec3 lightColor;
 
 void main() {
-    vec4 texColor = texture(textureAtlas, TexCoord * atlasTileSize + atlasOffset);
+    vec4 texColor = texture(textureAtlas, TexCoord);
     float diff = max(dot(normalize(Normal), normalize(-lightDir)), 0.0);
     vec3 diffuse = diff * lightColor;
     vec3 ambient = 0.3 * lightColor;
