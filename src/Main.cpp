@@ -18,7 +18,7 @@ namespace {
     float lastY = Config::windowHeight / 2.0f;
     bool firstMouse = true;
 
-    Camera camera(glm::vec3(0.0f, 15.0f, 5.0f));
+    Camera camera(glm::vec3(0.0f, 60.0f, 5.0f));
     ChunkManager* globalChunkManager = nullptr;
 
     bool raycast(glm::vec3 start, glm::vec3 direction, float maxDistance, glm::ivec3& hitPos, glm::ivec3& prevPos) {

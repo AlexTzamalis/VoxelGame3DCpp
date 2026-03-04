@@ -12,6 +12,7 @@ namespace Config {
     float cameraFov = 75.0f; // Note: You'll want to update Camera.hpp to use this eventually
 
     int renderDistance = 8; // Radiates out in a grid. E.g. Distance 4 = 9x9 grid = 81 Chunks.
+    int renderDistanceY = 2; // Up/down chunk loading limit to handle height
     bool frustumCulling = true; // Future toggle
     float fogDensity = 0.015f; // Exponential fog density
 }

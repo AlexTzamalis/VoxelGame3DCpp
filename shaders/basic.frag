@@ -17,6 +17,8 @@ uniform float fogDensity;
 
 void main() {
     vec4 texColor = texture(textureAtlas, TexCoord);
+    if (texColor.a < 0.1) discard; // Support true cut-out transparencies for leaves
+    
     texColor *= VertexColor; // Applies RGB biome tint AND the alpha channel (0.7f for water)
     float diff = max(dot(normalize(Normal), normalize(-lightDir)), 0.0);
     vec3 diffuse = diff * lightColor;

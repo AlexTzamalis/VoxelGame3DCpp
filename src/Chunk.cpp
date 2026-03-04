@@ -85,37 +85,79 @@ void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
     }
 }
 
-void Chunk::generateTerrain(FastNoiseLite& noise) {
+void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise) {
     for (int x = -1; x <= CHUNK_SIZE; ++x) {
         for (int z = -1; z <= CHUNK_SIZE; ++z) {
             float globalX = position_.x * CHUNK_SIZE + x;
             float globalZ = position_.z * CHUNK_SIZE + z;
             
-            // FastNoiseLite inherently outputs roughly between [-1.0f, 1.0f]
-            // We shift it up to 0->1, multiply it by 10 blocks vertical scale, and base it on 4 stone layers.
-            float noiseHeight = noise.GetNoise(globalX, globalZ);
-            int height = static_cast<int>((noiseHeight + 1.0f) * 0.5f * 10.0f) + 4;
+            float noiseVal = heightNoise.GetNoise(globalX, globalZ);
+            // Height range: smooth continents going from 10 to 45
+            int height = static_cast<int>((noiseVal + 1.0f) * 0.5f * 35.0f) + 10; 
 
             for (int y = -1; y <= CHUNK_SIZE; ++y) {
                 int globalY = position_.y * CHUNK_SIZE + y;
                 
-                // Solid ground level
                 if (globalY < height) {
-                    if (globalY == height - 1) {
-                        setVoxel(x, y, z, 2); // Surface Grass
-                    } else if (globalY > height - 4) {
-                        setVoxel(x, y, z, 3); // Sub-Surface Dirt
+                    float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
+                    // OpenSimplex2 ranges from -1 to 1. Using > 0.4 creates cavernous wormholes inside mountains
+                    if (globalY > 5 && caveVal > 0.4f) {
+                        setVoxel(x, y, z, 1); // Hollow Air Cave
                     } else {
-                        setVoxel(x, y, z, 4); // Deep Stone
+                        // Terrain placement (Dirt/Grass/Stone/Ores)
+                        if (globalY == height - 1) {
+                            if (globalY < 14) setVoxel(x, y, z, 3); // Dirt near water
+                            else setVoxel(x, y, z, 2); // Grass
+                        } else if (globalY > height - 4) {
+                            setVoxel(x, y, z, 3); // Dirt
+                        } else {
+                            // Pseudo-random Ore (Type 8) vs Stone (Type 4)
+                            if (globalY < 25 && ((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17) % 100 < 3) {
+                                setVoxel(x, y, z, 8); // Coal Ore
+                            } else {
+                                setVoxel(x, y, z, 4); // Deep Stone
+                            }
+                        }
                     }
                 } 
-                // Any empty voxels below Sea Level (which is 6 blocks high globally) become Water
-                else if (globalY <= 6) { 
-                    setVoxel(x, y, z, 5); // Water
+                else if (globalY <= 14) {
+                    setVoxel(x, y, z, 5); // Sea Level Water
                 } 
-                // Actual atmospheric void
                 else {
-                    setVoxel(x, y, z, 1); // Transparent Air
+                    setVoxel(x, y, z, 1); // Base Air
+                    
+                    // Forest System (Deterministic Trees)
+                    int treeHash = std::abs((int)globalX * 311 + (int)globalZ * 179) % 100;
+                    if (height > 14 && treeHash < 2) { // 2% chance of tree trunk per surface tile
+                        if (globalY >= height && globalY <= height + 4) {
+                            setVoxel(x, y, z, 6); // Wood Trunk
+                            continue;
+                        }
+                    }
+                    
+                    // Tree Leaves Algorithm (If near a tree trunk, spawn leaf clusters!)
+                    bool isLeaf = false;
+                    for(int dx = -2; dx <= 2 && !isLeaf; ++dx) {
+                        for(int dz = -2; dz <= 2 && !isLeaf; ++dz) {
+                            int tx = globalX + dx;
+                            int tz = globalZ + dz;
+                            int tHash = std::abs(tx * 311 + tz * 179) % 100;
+                            if (tHash < 2) {
+                                float tNoise = heightNoise.GetNoise((float)tx, (float)tz);
+                                int tHeight = static_cast<int>((tNoise + 1.0f) * 0.5f * 35.0f) + 10; 
+                                if (tHeight > 14) {
+                                    int dy = globalY - tHeight;
+                                    if (dy >= 3 && dy <= 5) { // Leaves populate height 3 to 5 above the trunk base
+                                        if (dy == 5 && (std::abs(dx) == 2 || std::abs(dz) == 2)) continue; // Round off top
+                                        isLeaf = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (isLeaf) {
+                        setVoxel(x, y, z, 7); // Leaf Block
+                    }
                 }
             }
         }
@@ -131,9 +173,15 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
     // Always render faces exposed to air/void
     if (neighbor == 0 || neighbor == 1) return true;
     
-    // Solid blocks MUST render their faces when touching transparent water
-    // This prevents the user from seeing "through" the shore into the void!
-    if (currentType != 5 && neighbor == 5) return true;
+    // Identify transparent geometry (Water=5, Leaves=7)
+    bool isCurrentTransparent = (currentType == 5 || currentType == 7);
+    bool isNeighborTransparent = (neighbor == 5 || neighbor == 7);
+    
+    // Solid blocks MUST render their faces when touching transparent blocks (fix void clipping)
+    if (!isCurrentTransparent && isNeighborTransparent) return true;
+    
+    // Two different transparent blocks touching (e.g. Water vs Leaves should show border between them!)
+    if (isCurrentTransparent && isNeighborTransparent && currentType != neighbor) return true;
     
     return false;
 }
@@ -169,6 +217,19 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         tileX = 1; // 2nd item in 2nd row
         tileY = 14;
         a = 0.7f; // Transparent opacity!
+    } else if (type == 6) { // Wood Trunk
+        tileX = 3; // Placeholder uses Stone pattern
+        tileY = 15;
+        r = 0.45f; g = 0.3f; b = 0.15f; // Deep Brown Tint
+    } else if (type == 7) { // Leaves
+        tileX = 0; // Placeholder uses Grayscale Grass Top 
+        tileY = 14;
+        r = 0.2f; g = 0.7f; b = 0.2f; // Very bright green foliage
+        a = 0.85f; // Partially transparent geometry
+    } else if (type == 8) { // Coal Ore Placeholder
+        tileX = 3; // Stone
+        tileY = 15;
+        r = 0.2f; g = 0.2f; b = 0.2f; // Dark Coal color
     } else {
         tileX = type % 16;
         tileY = 15 - (type / 16);
@@ -187,6 +248,13 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         // Lower the mesh height of water top faces to separate it elegantly from shores
         if (type == 5 && FACE_VERTICES[dir][i][1] > 0.0f) {
             vy -= 0.15f;
+        }
+        
+        // Shrink leaves very slightly to make the blocks feel more organic and rounded
+        if (type == 7) {
+            vx -= FACE_VERTICES[dir][i][3] * 0.05f;
+            vy -= FACE_VERTICES[dir][i][4] * 0.05f;
+            vz -= FACE_VERTICES[dir][i][5] * 0.05f;
         }
         
         float nx = FACE_VERTICES[dir][i][3];
@@ -213,13 +281,13 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
         vertices_.push_back(a);
     }
     
-    if (type == 5) { // Route to correct index buffer
-        waterIndices_.push_back(startIdx + 0);
-        waterIndices_.push_back(startIdx + 1);
-        waterIndices_.push_back(startIdx + 2);
-        waterIndices_.push_back(startIdx + 0);
-        waterIndices_.push_back(startIdx + 2);
-        waterIndices_.push_back(startIdx + 3);
+    if (type == 5 || type == 7) { // Route to transparent index buffer
+        transparentIndices_.push_back(startIdx + 0);
+        transparentIndices_.push_back(startIdx + 1);
+        transparentIndices_.push_back(startIdx + 2);
+        transparentIndices_.push_back(startIdx + 0);
+        transparentIndices_.push_back(startIdx + 2);
+        transparentIndices_.push_back(startIdx + 3);
     } else {
         indices_.push_back(startIdx + 0);
         indices_.push_back(startIdx + 1);
@@ -233,7 +301,7 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type) {
 void Chunk::generateMesh() {
     vertices_.clear();
     indices_.clear();
-    waterIndices_.clear();
+    transparentIndices_.clear();
 
     for (int x = 0; x < CHUNK_SIZE; ++x) {
         for (int y = 0; y < CHUNK_SIZE; ++y) {
@@ -251,7 +319,7 @@ void Chunk::generateMesh() {
     }
     
     indexCount_ = indices_.size();
-    waterIndexCount_ = waterIndices_.size();
+    transparentIndexCount_ = transparentIndices_.size();
     bufferNeedsUpdate_ = true;
 }
 
@@ -271,7 +339,7 @@ void Chunk::updateBuffers() {
     
     // Upload both sets sequentially
     std::vector<unsigned int> allIndices = indices_;
-    allIndices.insert(allIndices.end(), waterIndices_.begin(), waterIndices_.end());
+    allIndices.insert(allIndices.end(), transparentIndices_.begin(), transparentIndices_.end());
     
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
@@ -301,10 +369,10 @@ void Chunk::render() const {
     }
 }
 
-void Chunk::renderWater() const {
-    if (waterIndexCount_ > 0 && vao_ != 0) {
+void Chunk::renderTransparent() const {
+    if (transparentIndexCount_ > 0 && vao_ != 0) {
         glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, waterIndexCount_, GL_UNSIGNED_INT, (void*)(indexCount_ * sizeof(unsigned int)));
+        glDrawElements(GL_TRIANGLES, transparentIndexCount_, GL_UNSIGNED_INT, (void*)(indexCount_ * sizeof(unsigned int)));
         glBindVertexArray(0);
     }
 }
