@@ -65,6 +65,7 @@ add_executable(VoxelGame3D
     src/Shader.cpp
     src/Camera.cpp
     src/Texture.cpp
+    src/Chunk.cpp
     src/stb_image_impl.cpp
 )
 
