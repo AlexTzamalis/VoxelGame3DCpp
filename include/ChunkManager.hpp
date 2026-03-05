@@ -29,19 +29,32 @@ struct IVec2Hash {
     }
 };
 
+#pragma pack(push, 1)
+struct DrawElementsIndirectCommand {
+    unsigned int count;
+    unsigned int instanceCount;
+    unsigned int firstIndex;
+    int baseVertex;
+    unsigned int baseInstance;
+};
+#pragma pack(pop)
+
 struct ChunkColumn {
     glm::ivec2 position;
-    unsigned int vao = 0, vbo = 0, ebo = 0;
-    unsigned int indexCount = 0;
-    unsigned int transparentIndexCount = 0;
+    
+    std::vector<VoxelVertex> vertices;
+    std::vector<unsigned int> indices;
+    std::vector<unsigned int> transparentIndices;
+    
+    unsigned int vertexOffset = 0;
+    unsigned int indexOffset = 0;
+    unsigned int transparentIndexOffset = 0;
+    
     bool needsUpdate = false;
+    bool inVRAM = false;
     
-    ChunkColumn(glm::ivec2 pos);
-    ~ChunkColumn();
-    
-    void updateBuffers(const std::vector<VoxelVertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices);
-    void render() const;
-    void renderTransparent() const;
+    ChunkColumn(glm::ivec2 pos) : position(pos) {}
+    ~ChunkColumn() {}
 };
 
 class ChunkManager {
@@ -60,6 +73,15 @@ public:
 
 private:
     void workerThreadFunc();
+    void defragmentVRAM();
+
+    unsigned int mdiVAO_ = 0;
+    unsigned int mdiVBO_ = 0;
+    unsigned int mdiEBO_ = 0;
+    unsigned int mdiIndirectBufferOpaque_ = 0;
+    unsigned int mdiIndirectBufferTrans_ = 0;
+    unsigned int currentVertexOffset_ = 0;
+    unsigned int currentIndexOffset_ = 0;
 
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;
