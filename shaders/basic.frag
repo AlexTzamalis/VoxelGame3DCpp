@@ -21,18 +21,23 @@ void main() {
     if (texColor.a < 0.1) discard; // Support true cut-out transparencies for leaves
     
     texColor *= VertexColor; // Applies RGB biome tint AND the alpha channel (0.7f for water)
-    float diff = max(dot(normalize(Normal), normalize(-lightDir)), 0.0);
-    vec3 diffuse = diff * lightColor;
-    vec3 ambient = 0.3 * lightColor;
+    vec3 N = normalize(Normal);
+    
+    // Smooth, realistic voxel ambient lighting setup based on face direction
+    float skyLight = clamp(0.5 + 0.5 * N.y, 0.0, 1.0);
+    vec3 ambient = mix(vec3(0.35, 0.45, 0.6), vec3(1.0, 0.95, 0.9), skyLight) * 0.7;
+    
+    // Explicit fixed directional sun
+    float diff = max(dot(N, normalize(-lightDir)), 0.0);
+    vec3 diffuse = diff * lightColor * 0.8;
     
     vec3 result = (ambient + diffuse) * texColor.rgb;
     
     // Calculate distance from fragment to camera in world space
     float distance = length(FragPos - cameraPos);
     
-    // Linear fog based on Render Distance
-    float fogFactor = (distance - fogStart) / (fogEnd - fogStart);
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    // Smooth fog for softer atmospheric blending
+    float fogFactor = smoothstep(fogStart, fogEnd, distance);
     
     // Blend final pixel color into the skybox based on distance
     FragColor = vec4(mix(result, skyColor, fogFactor), texColor.a);
