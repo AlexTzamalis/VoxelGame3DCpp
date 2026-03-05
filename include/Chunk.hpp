@@ -1,8 +1,17 @@
 #pragma once
 
 #include <vector>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include "FastNoiseLite.h"
+
+#pragma pack(push, 1)
+struct VoxelVertex {
+    float x, y, z;
+    uint32_t data;
+    uint8_t r, g, b, a;
+};
+#pragma pack(pop)
 
 class Chunk {
 public:
@@ -22,14 +31,12 @@ public:
     
     bool isModified_ = false;
 
-    // Initialization and updates
     void generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise);
     void generateMesh();
-    void updateBuffers();
-    
-    // Rendering
-    void render() const;
-    void renderTransparent() const;
+    // Mesh data access for ChunkColumn
+    const std::vector<VoxelVertex>& getVertices() const { return vertices_; }
+    const std::vector<unsigned int>& getIndices() const { return indices_; }
+    const std::vector<unsigned int>& getTransparentIndices() const { return transparentIndices_; }
 
     glm::ivec3 getPosition() const { return position_; }
 
@@ -41,17 +48,7 @@ private:
     glm::ivec3 position_;
     std::vector<uint8_t> voxels_;
 
-    // Mesh data
-    std::vector<float> vertices_;
+    std::vector<VoxelVertex> vertices_;
     std::vector<unsigned int> indices_;
     std::vector<unsigned int> transparentIndices_;
-    
-    // OpenGL buffers
-    unsigned int vao_ = 0;
-    unsigned int vbo_ = 0;
-    unsigned int ebo_ = 0;
-    
-    bool bufferNeedsUpdate_ = false;
-    unsigned int indexCount_ = 0;
-    unsigned int transparentIndexCount_ = 0;
 };

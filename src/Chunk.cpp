@@ -60,16 +60,10 @@ const float FACE_VERTICES[6][4][8] = {
 };
 
 Chunk::Chunk(glm::ivec3 position) : position_(position) {
-    voxels_.resize(PADDED_SIZE * PADDED_SIZE * PADDED_SIZE, 0);
-    // Generation logic is now handled fully by ChunkManager via generateTerrain
+    // Memory is dynamically allocated on demand in setVoxel to save 90%+ RAM!
 }
 
 Chunk::~Chunk() {
-    if (vao_ != 0) {
-        glDeleteVertexArrays(1, &vao_);
-        glDeleteBuffers(1, &vbo_);
-        glDeleteBuffers(1, &ebo_);
-    }
 }
 
 int Chunk::getIndex(int x, int y, int z) const {
@@ -80,11 +74,16 @@ uint8_t Chunk::getVoxel(int x, int y, int z) const {
     if (x < -1 || x > CHUNK_SIZE || y < -1 || y > CHUNK_SIZE || z < -1 || z > CHUNK_SIZE) {
         return 0; // Air outside
     }
+    if (voxels_.empty()) return 1; // Default to Base Air if unallocated
     return voxels_[getIndex(x, y, z)];
 }
 
 void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
     if (x >= -1 && x <= CHUNK_SIZE && y >= -1 && y <= CHUNK_SIZE && z >= -1 && z <= CHUNK_SIZE) {
+        if (voxels_.empty()) {
+            if (type <= 1) return; // Never allocate 5.8KB memory just for Air blocks
+            voxels_.resize(PADDED_SIZE * PADDED_SIZE * PADDED_SIZE, 1);
+        }
         voxels_[getIndex(x, y, z)] = type;
     }
 }
@@ -323,7 +322,6 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
     bool isNeighborTransparent = (neighbor == 5 || neighbor == 7);
     
     if (!isCurrentTransparent && isNeighborTransparent) return true;
-    if (currentType == 7 && neighbor == 7) return true;
     if (isCurrentTransparent && isNeighborTransparent && currentType != neighbor) return true;
     
     return false;
@@ -332,7 +330,7 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
 void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int height) {
     if (type <= 1) return; 
     
-    int startIdx = vertices_.size() / 13; // 13 floats per vertex (Pos, Norm, UV+Layer, Color)
+    int startIdx = vertices_.size();
 
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 
@@ -367,34 +365,31 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
             vy *= height; 
         }
 
-        vx += x;
-        vy += y;
-        vz += z;
+        vx += (position_.x * CHUNK_SIZE) + x;
+        vy += (position_.y * CHUNK_SIZE) + y;
+        vz += (position_.z * CHUNK_SIZE) + z;
         
         if (type == 5 && FACE_VERTICES[dir][i][1] > 0.5f && dir == 2) {
             vy -= 0.15f;
         }
         
-        float nx = FACE_VERTICES[dir][i][3];
-        float ny = FACE_VERTICES[dir][i][4];
-        float nz = FACE_VERTICES[dir][i][5];
-        
-        float bu = FACE_VERTICES[dir][i][6] * width;
-        float bv = FACE_VERTICES[dir][i][7] * height;
+        uint32_t packedData = (dir & 0x7) | 
+                              ((width & 0x1F) << 3) | 
+                              ((height & 0x1F) << 8) | 
+                              ((static_cast<uint32_t>(layer) & 0xFFFF) << 13) | 
+                              ((i & 0x3) << 29);
 
-        vertices_.push_back(vx);
-        vertices_.push_back(vy);
-        vertices_.push_back(vz);
-        vertices_.push_back(nx);
-        vertices_.push_back(ny);
-        vertices_.push_back(nz);
-        vertices_.push_back(bu);
-        vertices_.push_back(bv);
-        vertices_.push_back(layer);
-        vertices_.push_back(r);
-        vertices_.push_back(g);
-        vertices_.push_back(b);
-        vertices_.push_back(a);
+        VoxelVertex vertex;
+        vertex.x = vx;
+        vertex.y = vy;
+        vertex.z = vz;
+        vertex.data = packedData;
+        vertex.r = static_cast<uint8_t>(r * 255.0f);
+        vertex.g = static_cast<uint8_t>(g * 255.0f);
+        vertex.b = static_cast<uint8_t>(b * 255.0f);
+        vertex.a = static_cast<uint8_t>(a * 255.0f);
+
+        vertices_.push_back(vertex);
     }
     
     if (type == 5 || type == 7) { 
@@ -472,72 +467,5 @@ void Chunk::generateMesh() {
                 }
             }
         }
-    }
-    
-    indexCount_ = indices_.size();
-    transparentIndexCount_ = transparentIndices_.size();
-    bufferNeedsUpdate_ = true;
-}
-
-void Chunk::updateBuffers() {
-    if (!bufferNeedsUpdate_) return;
-    
-    if (vao_ == 0) {
-        glGenVertexArrays(1, &vao_);
-        glGenBuffers(1, &vbo_);
-        glGenBuffers(1, &ebo_);
-    }
-
-    glBindVertexArray(vao_);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    glBufferData(GL_ARRAY_BUFFER, vertices_.size() * sizeof(float), vertices_.data(), GL_STATIC_DRAW);
-    
-    // Upload both sets sequentially
-    std::vector<unsigned int> allIndices = indices_;
-    allIndices.insert(allIndices.end(), transparentIndices_.begin(), transparentIndices_.end());
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
-    
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        
-        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(9 * sizeof(float)));
-        glEnableVertexAttribArray(3);
-    
-    glBindVertexArray(0);
-    
-    // EXTREME OPTIMIZATION: Free CPU RAM immediately after transfer to VRAM.
-    // 32 render distance = ~60,000 chunks = ~5GB vectors unless cleared!
-    vertices_.clear();
-    vertices_.shrink_to_fit();
-    indices_.clear();
-    indices_.shrink_to_fit();
-    transparentIndices_.clear();
-    transparentIndices_.shrink_to_fit();
-    
-    bufferNeedsUpdate_ = false;
-}
-
-void Chunk::render() const {
-    if (indexCount_ > 0 && vao_ != 0) {
-        glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-}
-
-void Chunk::renderTransparent() const {
-    if (transparentIndexCount_ > 0 && vao_ != 0) {
-        glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, transparentIndexCount_, GL_UNSIGNED_INT, (void*)(indexCount_ * sizeof(unsigned int)));
-        glBindVertexArray(0);
     }
 }

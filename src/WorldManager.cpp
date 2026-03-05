@@ -108,8 +108,17 @@ bool WorldManager::loadChunk(glm::ivec3 pos, std::vector<uint8_t>& voxelData) {
     if (currentWorld.folderName.empty()) return false;
     std::string filename = "saves/" + currentWorld.folderName + "/chunks/" + 
                            std::to_string(pos.x) + "_" + std::to_string(pos.y) + "_" + std::to_string(pos.z) + ".bin";
-    std::ifstream file(filename, std::ios::binary);
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if (!file.is_open()) return false;
+    
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    
+    if (size == 0) {
+        voxelData.clear();
+        return true;
+    }
+    
     file.read(reinterpret_cast<char*>(voxelData.data()), voxelData.size());
     return true;
 }

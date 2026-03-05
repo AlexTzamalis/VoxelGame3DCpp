@@ -1,7 +1,7 @@
 #version 330 core
 layout (location = 0) in vec3 aPos;
-layout (location = 2) in vec3 aTexCoord;
-layout (location = 3) in vec4 aColor;
+layout (location = 1) in uint aData;
+layout (location = 2) in vec4 aColor;
 
 uniform mat4 lightSpaceMatrix;
 uniform mat4 model;
@@ -11,6 +11,15 @@ out vec3 TexCoord;
 out vec4 VertexColor;
 
 void main() {
+    uint width = (aData >> 3u) & 31u;
+    uint height = (aData >> 8u) & 31u;
+    uint layer = (aData >> 13u) & 65535u;
+    uint corner = (aData >> 29u) & 3u;
+    
+    float u = (corner == 2u || corner == 3u) ? float(width) : 0.0;
+    float v = (corner == 0u || corner == 3u) ? float(height) : 0.0;
+    vec3 aTexCoord = vec3(u, v, float(layer));
+
     TexCoord = aTexCoord;
     VertexColor = aColor;
     
