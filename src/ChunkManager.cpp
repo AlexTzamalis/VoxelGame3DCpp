@@ -5,6 +5,64 @@
 #include <iostream>
 #include <GL/glew.h>
 
+ChunkColumn::ChunkColumn(glm::ivec2 pos) : position(pos) {}
+
+ChunkColumn::~ChunkColumn() {
+    if (vao != 0) {
+        glDeleteVertexArrays(1, &vao);
+        glDeleteBuffers(1, &vbo);
+        glDeleteBuffers(1, &ebo);
+    }
+}
+
+void ChunkColumn::updateBuffers(const std::vector<float>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices) {
+    if (vao == 0) {
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glGenBuffers(1, &ebo);
+    }
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    
+    std::vector<unsigned int> allIndices = indices;
+    allIndices.insert(allIndices.end(), transIndices.begin(), transIndices.end());
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(9 * sizeof(float)));
+    glEnableVertexAttribArray(3);
+    
+    glBindVertexArray(0);
+    
+    indexCount = indices.size();
+    transparentIndexCount = transIndices.size();
+}
+
+void ChunkColumn::render() const {
+    if (indexCount > 0 && vao != 0) {
+        glBindVertexArray(vao);
+        glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    }
+}
+
+void ChunkColumn::renderTransparent() const {
+    if (transparentIndexCount > 0 && vao != 0) {
+        glBindVertexArray(vao);
+        glDrawElements(GL_TRIANGLES, transparentIndexCount, GL_UNSIGNED_INT, (void*)(indexCount * sizeof(unsigned int)));
+        glBindVertexArray(0);
+    }
+}
+
 ChunkManager::ChunkManager() : isRunning_(true) {
     // Launch worker threads
     int numThreads = std::thread::hardware_concurrency() - 1;
@@ -83,8 +141,14 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     }
 
     for (auto& chunk : finishedChunks) {
-        chunk->updateBuffers(); // Create VAO/VBO inside main OpenGL Context
         glm::ivec3 pos = chunk->getPosition();
+        glm::ivec2 colPos(pos.x, pos.z);
+        
+        if (columns_.find(colPos) == columns_.end()) {
+            columns_[colPos] = std::make_unique<ChunkColumn>(colPos);
+        }
+        columns_[colPos]->needsUpdate = true;
+        
         chunks_[pos] = std::move(chunk);
         generatingChunks_.erase(pos);
     }
@@ -132,10 +196,50 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             if (it->second->isModified_) {
                 WorldManager::saveChunk(it->first, it->second->getVoxels());
             }
+            glm::ivec2 colPos(it->first.x, it->first.z);
+            if (columns_.find(colPos) != columns_.end()) {
+                columns_[colPos]->needsUpdate = true;
+            }
             it = chunks_.erase(it);
         } else {
             ++it;
         }
+    }
+
+    // Clean up empty columns and update modified columns
+    for (auto it = columns_.begin(); it != columns_.end(); ) {
+        if (it->second->needsUpdate) {
+            std::vector<float> allVerts;
+            std::vector<unsigned int> allInds;
+            std::vector<unsigned int> allTrans;
+            
+            bool hasAnyChunk = false;
+            for (int y = -32; y <= 16; ++y) {
+                 glm::ivec3 pos(it->first.x, y, it->first.y);
+                 auto cit = chunks_.find(pos);
+                 if (cit != chunks_.end()) {
+                      hasAnyChunk = true;
+                      unsigned int baseVert = allVerts.size() / 13;
+                      const auto& cVerts = cit->second->getVertices();
+                      const auto& cInds = cit->second->getIndices();
+                      const auto& cTrans = cit->second->getTransparentIndices();
+                      
+                      allVerts.insert(allVerts.end(), cVerts.begin(), cVerts.end());
+                      for (unsigned int idx : cInds) allInds.push_back(idx + baseVert);
+                      for (unsigned int idx : cTrans) allTrans.push_back(idx + baseVert);
+                 }
+            }
+            
+            if (!hasAnyChunk) {
+                // Column is permanently dead, cull it.
+                it = columns_.erase(it);
+                continue;
+            } else {
+                it->second->updateBuffers(allVerts, allInds, allTrans);
+                it->second->needsUpdate = false;
+            }
+        }
+        ++it;
     }
 
     // Also prune generating requests (if player moved so fast we left range before it even started)
@@ -146,45 +250,41 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
     glm::vec3 camPos = camera.position();
     float limitSq = radialDistLimit * radialDistLimit;
 
+    // Send global identity matrix once! 
+    glm::mat4 globalModel = glm::mat4(1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(globalModel));
+
     // 1. OPAQUE RENDER PASS
-    for (const auto& [pos, chunk] : chunks_) {
-        glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
+    for (const auto& [pos, column] : columns_) {
+        glm::vec3 minBound = glm::vec3(pos.x, -32.0f, pos.y) * static_cast<float>(Chunk::CHUNK_SIZE);
         
         // Optimize shadow cascades dropping chunks drastically out of shadow camera radius
         if (radialDistLimit > 0.0f) {
-            float dx = minBound.x - camPos.x;
-            float dz = minBound.z - camPos.z;
+            float dx = (pos.x * Chunk::CHUNK_SIZE) - camPos.x;
+            float dz = (pos.y * Chunk::CHUNK_SIZE) - camPos.z;
             if (dx * dx + dz * dz > limitSq) continue;
         }
 
-        glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
+        glm::vec3 maxBound = glm::vec3(pos.x + 1, 16.0f, pos.y + 1) * static_cast<float>(Chunk::CHUNK_SIZE);
         if (!bypassFrustum && Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
         
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, minBound);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        
-        chunk->render();
+        column->render();
     }
     
     // 2. TRANSPARENT RENDER PASS (Water & Leaves)
-    for (const auto& [pos, chunk] : chunks_) {
-        glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
+    for (const auto& [pos, column] : columns_) {
+        glm::vec3 minBound = glm::vec3(pos.x, -32.0f, pos.y) * static_cast<float>(Chunk::CHUNK_SIZE);
         
         if (radialDistLimit > 0.0f) {
-            float dx = minBound.x - camPos.x;
-            float dz = minBound.z - camPos.z;
+            float dx = (pos.x * Chunk::CHUNK_SIZE) - camPos.x;
+            float dz = (pos.y * Chunk::CHUNK_SIZE) - camPos.z;
             if (dx * dx + dz * dz > limitSq) continue;
         }
 
-        glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
+        glm::vec3 maxBound = glm::vec3(pos.x + 1, 16.0f, pos.y + 1) * static_cast<float>(Chunk::CHUNK_SIZE);
         if (!bypassFrustum && Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
         
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, minBound);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        
-        chunk->renderTransparent();
+        column->renderTransparent();
     }
 }
 
@@ -220,7 +320,7 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         
         // Rebuild the mesh instantly on main thread for instantaneous player feedback
         it->second->generateMesh();
-        it->second->updateBuffers();
+        columns_[glm::ivec2(cx, cz)]->needsUpdate = true;
 
         // Update padding voxel data on direct neighboring faces!
         auto checkNeighbor = [&](int dx, int dy, int dz) {
@@ -234,7 +334,8 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
                 nIt->second->setVoxel(nx, ny, nz, type);
                 
                 nIt->second->generateMesh();
-                nIt->second->updateBuffers();
+                glm::ivec2 colPos(nPos.x, nPos.z);
+                if (columns_.find(colPos) != columns_.end()) columns_[colPos]->needsUpdate = true;
             }
         };
 
@@ -262,6 +363,7 @@ void ChunkManager::clear() {
     }
     
     chunks_.clear();
+    columns_.clear();
     generatingChunks_.clear();
 }
 

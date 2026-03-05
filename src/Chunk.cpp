@@ -65,11 +65,6 @@ Chunk::Chunk(glm::ivec3 position) : position_(position) {
 }
 
 Chunk::~Chunk() {
-    if (vao_ != 0) {
-        glDeleteVertexArrays(1, &vao_);
-        glDeleteBuffers(1, &vbo_);
-        glDeleteBuffers(1, &ebo_);
-    }
 }
 
 int Chunk::getIndex(int x, int y, int z) const {
@@ -323,7 +318,6 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
     bool isNeighborTransparent = (neighbor == 5 || neighbor == 7);
     
     if (!isCurrentTransparent && isNeighborTransparent) return true;
-    if (currentType == 7 && neighbor == 7) return true;
     if (isCurrentTransparent && isNeighborTransparent && currentType != neighbor) return true;
     
     return false;
@@ -367,9 +361,9 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
             vy *= height; 
         }
 
-        vx += x;
-        vy += y;
-        vz += z;
+        vx += (position_.x * CHUNK_SIZE) + x;
+        vy += (position_.y * CHUNK_SIZE) + y;
+        vz += (position_.z * CHUNK_SIZE) + z;
         
         if (type == 5 && FACE_VERTICES[dir][i][1] > 0.5f && dir == 2) {
             vy -= 0.15f;
@@ -472,72 +466,5 @@ void Chunk::generateMesh() {
                 }
             }
         }
-    }
-    
-    indexCount_ = indices_.size();
-    transparentIndexCount_ = transparentIndices_.size();
-    bufferNeedsUpdate_ = true;
-}
-
-void Chunk::updateBuffers() {
-    if (!bufferNeedsUpdate_) return;
-    
-    if (vao_ == 0) {
-        glGenVertexArrays(1, &vao_);
-        glGenBuffers(1, &vbo_);
-        glGenBuffers(1, &ebo_);
-    }
-
-    glBindVertexArray(vao_);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    glBufferData(GL_ARRAY_BUFFER, vertices_.size() * sizeof(float), vertices_.data(), GL_STATIC_DRAW);
-    
-    // Upload both sets sequentially
-    std::vector<unsigned int> allIndices = indices_;
-    allIndices.insert(allIndices.end(), transparentIndices_.begin(), transparentIndices_.end());
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
-    
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        
-        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(9 * sizeof(float)));
-        glEnableVertexAttribArray(3);
-    
-    glBindVertexArray(0);
-    
-    // EXTREME OPTIMIZATION: Free CPU RAM immediately after transfer to VRAM.
-    // 32 render distance = ~60,000 chunks = ~5GB vectors unless cleared!
-    vertices_.clear();
-    vertices_.shrink_to_fit();
-    indices_.clear();
-    indices_.shrink_to_fit();
-    transparentIndices_.clear();
-    transparentIndices_.shrink_to_fit();
-    
-    bufferNeedsUpdate_ = false;
-}
-
-void Chunk::render() const {
-    if (indexCount_ > 0 && vao_ != 0) {
-        glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-}
-
-void Chunk::renderTransparent() const {
-    if (transparentIndexCount_ > 0 && vao_ != 0) {
-        glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, transparentIndexCount_, GL_UNSIGNED_INT, (void*)(indexCount_ * sizeof(unsigned int)));
-        glBindVertexArray(0);
     }
 }

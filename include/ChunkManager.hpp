@@ -17,11 +17,31 @@
 #include <memory>
 #include <glm/glm.hpp>
 
-// Hash function for glm::ivec3 to use in std::unordered_map
 struct IVec3Hash {
     std::size_t operator()(const glm::ivec3& v) const {
         return std::hash<int>()(v.x) ^ (std::hash<int>()(v.y) << 1) ^ (std::hash<int>()(v.z) << 2);
     }
+};
+
+struct IVec2Hash {
+    std::size_t operator()(const glm::ivec2& v) const {
+        return std::hash<int>()(v.x) ^ (std::hash<int>()(v.y) << 1);
+    }
+};
+
+struct ChunkColumn {
+    glm::ivec2 position;
+    unsigned int vao = 0, vbo = 0, ebo = 0;
+    unsigned int indexCount = 0;
+    unsigned int transparentIndexCount = 0;
+    bool needsUpdate = false;
+    
+    ChunkColumn(glm::ivec2 pos);
+    ~ChunkColumn();
+    
+    void updateBuffers(const std::vector<float>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices);
+    void render() const;
+    void renderTransparent() const;
 };
 
 class ChunkManager {
@@ -43,6 +63,7 @@ private:
 
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;
+    std::unordered_map<glm::ivec2, std::unique_ptr<ChunkColumn>, IVec2Hash> columns_;
 
     // Keeps track of chunks currently being generated so we don't start duplicate jobs
     std::unordered_map<glm::ivec3, bool, IVec3Hash> generatingChunks_;
