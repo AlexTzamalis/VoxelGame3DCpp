@@ -106,14 +106,16 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                 if (globalY < height) {
                     float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
                     
+                    // Use a narrow band around 0 to create interconnected twisting tunnel caves!
+                    float tunnelThreshold = 0.04f;
+                    
                     // Decrease cave likelihood near the surface to prevent swiss cheese mountains
                     float depth = height - globalY;
-                    float threshold = 0.45f;
                     if (depth < 15.0f) {
-                        threshold += (15.0f - depth) * 0.05f; // Pushes threshold very high near surface
+                        tunnelThreshold *= (depth / 15.0f); // Taper off the tunnel size near surface
                     }
                     
-                    if (globalY > -95 && caveVal > threshold) {
+                    if (globalY > -95 && std::abs(caveVal) < tunnelThreshold) {
                         setVoxel(x, y, z, 1); // Hollow Air Cave
                     } else {
                         // Terrain placement (Dirt/Grass/Stone/Ores)
@@ -139,8 +141,13 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                     setVoxel(x, y, z, 1); // Base Air
                     
                     // Forest System (Sparse, highly randomized Deterministic Trees)
-                    int treeHash = std::abs((int)globalX * 9871 + (int)globalZ * 3457) % 500;
-                    if (height > 63 && treeHash < 3) { // 0.6% chance of tree trunk per surface tile
+                    // Better avalanche hash function to completely prevent linear "Tree Snakes"
+                    uint32_t mixX = (uint32_t)std::abs((int)globalX);
+                    uint32_t mixZ = (uint32_t)std::abs((int)globalZ);
+                    uint32_t hashValue = (mixX * 374761393U ^ mixZ * 668265263U);
+                    hashValue = (hashValue ^ (hashValue >> 13)) * 1274126177U;
+                    
+                    if (height > 63 && height < 100 && (hashValue % 1000) < 6) { // 0.6% chance of tree trunk per surface tile
                         if (globalY >= height && globalY <= height + 4) {
                             setVoxel(x, y, z, 6); // Wood Trunk
                             continue;
@@ -153,8 +160,12 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                         for(int dz = -2; dz <= 2 && !isLeaf; ++dz) {
                             int tx = globalX + dx;
                             int tz = globalZ + dz;
-                            int tHash = std::abs(tx * 9871 + tz * 3457) % 500;
-                            if (tHash < 3) {
+                            uint32_t tMixX = (uint32_t)std::abs(tx);
+                            uint32_t tMixZ = (uint32_t)std::abs(tz);
+                            uint32_t tHash = (tMixX * 374761393U ^ tMixZ * 668265263U);
+                            tHash = (tHash ^ (tHash >> 13)) * 1274126177U;
+                            
+                            if ((tHash % 1000) < 6) {
                                 float tNoise = heightNoise.GetNoise((float)tx, (float)tz);
                                 float tn01 = std::pow((tNoise + 1.0f) * 0.5f, 1.25f);
                                 int tHeight = static_cast<int>(tn01 * 90.0f) + 40; 

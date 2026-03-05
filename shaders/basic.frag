@@ -13,7 +13,8 @@ uniform vec3 lightColor;
 // Variables for Atmospheric Fog
 uniform vec3 cameraPos;
 uniform vec3 skyColor;
-uniform float fogDensity;
+uniform float fogStart;
+uniform float fogEnd;
 
 void main() {
     vec4 texColor = texture(textureAtlas, TexCoord);
@@ -29,10 +30,10 @@ void main() {
     // Calculate distance from fragment to camera in world space
     float distance = length(FragPos - cameraPos);
     
-    // Exponential squared fog blending
-    float fogFactor = exp(-pow(distance * fogDensity, 2.0));
+    // Linear fog based on Render Distance
+    float fogFactor = (distance - fogStart) / (fogEnd - fogStart);
     fogFactor = clamp(fogFactor, 0.0, 1.0);
     
     // Blend final pixel color into the skybox based on distance
-    FragColor = vec4(mix(skyColor, result, fogFactor), texColor.a);
+    FragColor = vec4(mix(result, skyColor, fogFactor), texColor.a);
 }

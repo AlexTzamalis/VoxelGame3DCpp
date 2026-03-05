@@ -214,7 +214,11 @@ int main() {
         // Pass essential sky and fog values to the GPU
         shader.setVec3("cameraPos", camera.position());
         shader.setVec3("skyColor", skyColor);
-        shader.setFloat("fogDensity", Config::fogDensity);
+        
+        // Dynamically scale fog to the Render Distance!
+        float renderDistBlocks = Config::renderDistance * 16.0f;
+        shader.setFloat("fogEnd", renderDistBlocks);
+        shader.setFloat("fogStart", renderDistBlocks * 0.6f); // Fog begins 60% of the way to the edge
 
         shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
         shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
