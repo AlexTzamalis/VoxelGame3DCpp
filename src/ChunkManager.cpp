@@ -1,4 +1,5 @@
 #include "ChunkManager.hpp"
+#include "WorldManager.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -54,7 +55,15 @@ void ChunkManager::workerThreadFunc() {
 
         // Heavy Lifting off the main thread
         auto chunk = std::make_unique<Chunk>(taskPos);
-        chunk->generateTerrain(localHeightNoise, localCaveNoise); 
+        
+        std::vector<uint8_t> savedData(Chunk::PADDED_SIZE * Chunk::PADDED_SIZE * Chunk::PADDED_SIZE);
+        if (WorldManager::loadChunk(taskPos, savedData)) {
+            chunk->setVoxels(savedData);
+            chunk->isModified_ = true; // Still flag true so it persists safely
+        } else {
+            chunk->generateTerrain(localHeightNoise, localCaveNoise); 
+        }
+        
         chunk->generateMesh();
 
         // Push finished chunk back safely
@@ -120,6 +129,9 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // Unload chunks outside radius
     for (auto it = chunks_.begin(); it != chunks_.end(); ) {
         if (activeChunks.find(it->first) == activeChunks.end()) {
+            if (it->second->isModified_) {
+                WorldManager::saveChunk(it->first, it->second->getVoxels());
+            }
             it = chunks_.erase(it);
         } else {
             ++it;
@@ -186,6 +198,7 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         int ly = y - cy * Chunk::CHUNK_SIZE;
         int lz = z - cz * Chunk::CHUNK_SIZE;
         it->second->setVoxel(lx, ly, lz, type);
+        it->second->isModified_ = true;
         
         // Rebuild the mesh instantly on main thread for instantaneous player feedback
         it->second->generateMesh();
@@ -199,6 +212,14 @@ void ChunkManager::clear() {
     std::queue<glm::ivec3> emptyQueue;
     std::swap(pendingTasks_, emptyQueue);
     readyChunks_.clear();
+    
+    // Save any outstanding dirty chunks to disk as the world closes completely
+    for(const auto& [pos, chunk] : chunks_) {
+        if (chunk->isModified_) {
+            WorldManager::saveChunk(pos, chunk->getVoxels());
+        }
+    }
+    
     chunks_.clear();
     generatingChunks_.clear();
 }

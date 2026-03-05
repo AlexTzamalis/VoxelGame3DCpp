@@ -15,6 +15,12 @@ public:
     // Voxel access
     uint8_t getVoxel(int x, int y, int z) const;
     void setVoxel(int x, int y, int z, uint8_t type);
+    
+    // Serialization Access
+    const std::vector<uint8_t>& getVoxels() const { return voxels_; }
+    void setVoxels(const std::vector<uint8_t>& voxels) { voxels_ = voxels; }
+    
+    bool isModified_ = false;
 
     // Initialization and updates
     void generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise);

@@ -3,6 +3,7 @@
 #include "Config.hpp"
 #include <string>
 #include <vector>
+#include <glm/glm.hpp>
 
 long long getCurrentTimeMs();
 
@@ -25,6 +26,12 @@ public:
     static bool saveWorldMetadata(const WorldMetadata& meta);
     static void loadWorld(const std::string& folderName);
     static void updatePlayTime();
+    
+    // Entity & Chunk Serialization
+    static bool saveChunk(glm::ivec3 pos, const std::vector<uint8_t>& voxelData);
+    static bool loadChunk(glm::ivec3 pos, std::vector<uint8_t>& voxelData);
+    static bool savePlayer(glm::vec3 pos, float pitch, float yaw);
+    static bool loadPlayer(glm::vec3& pos, float& pitch, float& yaw);
     
     inline static WorldMetadata currentWorld;
     inline static long long sessionStartTime = 0;

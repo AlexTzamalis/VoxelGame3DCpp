@@ -47,6 +47,7 @@ bool WorldManager::createWorld(const WorldMetadata& meta) {
     std::string path = "saves/" + meta.folderName;
     if (fs::exists(path)) return false;
     fs::create_directory(path);
+    fs::create_directory(path + "/chunks");
     saveWorldMetadata(meta);
     return true;
 }
@@ -91,4 +92,42 @@ void WorldManager::updatePlayTime() {
     currentWorld.timePlayedSeconds = sessionStartPlayTime + diffSeconds;
     currentWorld.lastPlayed = now;
     saveWorldMetadata(currentWorld);
+}
+
+bool WorldManager::saveChunk(glm::ivec3 pos, const std::vector<uint8_t>& voxelData) {
+    if (currentWorld.folderName.empty()) return false;
+    std::string filename = "saves/" + currentWorld.folderName + "/chunks/" + 
+                           std::to_string(pos.x) + "_" + std::to_string(pos.y) + "_" + std::to_string(pos.z) + ".bin";
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) return false;
+    file.write(reinterpret_cast<const char*>(voxelData.data()), voxelData.size());
+    return true;
+}
+
+bool WorldManager::loadChunk(glm::ivec3 pos, std::vector<uint8_t>& voxelData) {
+    if (currentWorld.folderName.empty()) return false;
+    std::string filename = "saves/" + currentWorld.folderName + "/chunks/" + 
+                           std::to_string(pos.x) + "_" + std::to_string(pos.y) + "_" + std::to_string(pos.z) + ".bin";
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) return false;
+    file.read(reinterpret_cast<char*>(voxelData.data()), voxelData.size());
+    return true;
+}
+
+bool WorldManager::savePlayer(glm::vec3 pos, float pitch, float yaw) {
+    if (currentWorld.folderName.empty()) return false;
+    std::string filename = "saves/" + currentWorld.folderName + "/player.txt";
+    std::ofstream file(filename);
+    if (!file.is_open()) return false;
+    file << pos.x << " " << pos.y << " " << pos.z << "\n" << pitch << " " << yaw << "\n";
+    return true;
+}
+
+bool WorldManager::loadPlayer(glm::vec3& pos, float& pitch, float& yaw) {
+    if (currentWorld.folderName.empty()) return false;
+    std::string filename = "saves/" + currentWorld.folderName + "/player.txt";
+    std::ifstream file(filename);
+    if (!file.is_open()) return false;
+    file >> pos.x >> pos.y >> pos.z >> pitch >> yaw;
+    return true;
 }

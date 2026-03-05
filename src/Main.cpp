@@ -349,8 +349,17 @@ int main() {
                         if (ImGui::Button(playLabel.c_str(), ImVec2(80, 25))) {
                             chunkManager.clear();
                             WorldManager::loadWorld(w.folderName);
-                            // Initial Spawn High Height so we can safely fall onto the completely loaded world!
-                            camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); 
+                            
+                            glm::vec3 savedPos; float pitch, yaw;
+                            if (WorldManager::loadPlayer(savedPos, pitch, yaw)) {
+                                camera.setPosition(savedPos);
+                                camera.setPitch(pitch);
+                                camera.setYaw(yaw);
+                                camera.updateVectors();
+                            } else {
+                                camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); 
+                            }
+                            
                             Config::currentState = GameState::PLAYING;
                             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                             firstMouse = true;
@@ -413,8 +422,17 @@ int main() {
                 chunkManager.clear();
                 WorldManager::loadWorld(newMeta.folderName);
                 
-                // Initial spawn location (Falling safely)
-                camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f));
+                glm::vec3 savedPos; float pitch, yaw;
+                if (WorldManager::loadPlayer(savedPos, pitch, yaw)) {
+                    camera.setPosition(savedPos);
+                    camera.setPitch(pitch);
+                    camera.setYaw(yaw);
+                    camera.updateVectors();
+                } else {
+                    camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); // Initial spawn location (Falling safely)
+                }
+                
+                WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
                 
                 Config::currentState = GameState::PLAYING;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -459,7 +477,9 @@ int main() {
                 firstMouse = true;
             }
             if (ImGui::Button("Save and Quit to Menu", ImVec2(280, 40))) {
+                WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
                 WorldManager::updatePlayTime();
+                chunkManager.clear(); // Flushes all modified chunks to disk securely!
                 Config::currentState = GameState::MAIN_MENU;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }

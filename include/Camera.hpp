@@ -21,12 +21,17 @@ public:
     glm::mat4 viewMatrix() const;
     glm::vec3 position() const { return position_; }
     void setPosition(glm::vec3 pos) { position_ = pos; physicsVelocity_ = glm::vec3(0.0f); }
+    float pitch() const { return pitch_; }
+    void setPitch(float p) { pitch_ = p; }
+    float yaw() const { return yaw_; }
+    void setYaw(float y) { yaw_ = y; }
     glm::vec3 front() const { return front_; }
     glm::vec3 right() const { return right_; }
     glm::vec3 up() const { return up_; }
 
     void jump(float velocity);
     void applyPhysics(float deltaTime, const std::function<bool(glm::vec3, glm::vec3)>& checkCollisionFunc);
+    void updateVectors();
     
     // Instead of raw move, player input pushes velocity now.
     void addVelocity(glm::vec3 delta) { inputVelocity_ += delta; }
@@ -39,8 +44,6 @@ public:
     bool isBoxInFrustum(const glm::vec3& min, const glm::vec3& max) const;
 
 private:
-    void updateVectors();
-
     glm::vec3 position_;
     glm::vec3 front_;
     glm::vec3 up_;
