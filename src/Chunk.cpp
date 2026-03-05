@@ -106,16 +106,16 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                 if (globalY < height) {
                     float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
                     
-                    // Use a narrow band around 0 to create interconnected twisting tunnel caves!
-                    float tunnelThreshold = 0.04f;
+                    // Ridged noise produces peaks near 1.0 continuously
+                    float tunnelThreshold = 0.85f;
                     
                     // Decrease cave likelihood near the surface to prevent swiss cheese mountains
                     float depth = height - globalY;
                     if (depth < 15.0f) {
-                        tunnelThreshold *= (depth / 15.0f); // Taper off the tunnel size near surface
+                        tunnelThreshold += (15.0f - depth) * 0.05f; // Pushes limit > 1.0 (No caves on surface)
                     }
                     
-                    if (globalY > -95 && std::abs(caveVal) < tunnelThreshold) {
+                    if (globalY > -95 && caveVal > tunnelThreshold) {
                         setVoxel(x, y, z, 1); // Hollow Air Cave
                     } else {
                         // Terrain placement (Dirt/Grass/Stone/Ores)

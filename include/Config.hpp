@@ -6,6 +6,12 @@ enum class GameMode {
     SPECTATOR
 };
 
+enum class GameState {
+    MAIN_MENU,
+    PLAYING,
+    PAUSED
+};
+
 namespace Config {
     // Window & Display Settings
     extern int windowWidth;
@@ -26,4 +32,5 @@ namespace Config {
     
     // Game State
     extern GameMode currentMode;
+    extern GameState currentState;
 }

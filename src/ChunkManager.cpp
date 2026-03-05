@@ -43,11 +43,13 @@ void ChunkManager::workerThreadFunc() {
         localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
         localHeightNoise.SetFractalOctaves(5);      
 
-        // 2. Caverns / Wormholes
+        // 2. Caverns / Wormholes uses Ridged noise for tubular structures!
         FastNoiseLite localCaveNoise;
         localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
         localCaveNoise.SetSeed(9999); 
-        localCaveNoise.SetFrequency(0.04f);       
+        localCaveNoise.SetFrequency(0.02f); // Lower freq for larger cave veins
+        localCaveNoise.SetFractalType(FastNoiseLite::FractalType_Ridged); // Carves ridges
+        localCaveNoise.SetFractalOctaves(2); // Smooth tubes
 
         // Heavy Lifting off the main thread
         auto chunk = std::make_unique<Chunk>(taskPos);

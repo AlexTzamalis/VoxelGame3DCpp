@@ -10,6 +10,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <cmath>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 
 namespace {
     float deltaTime = 0.0f;
@@ -48,6 +51,8 @@ namespace {
     }
 
     void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+        if (Config::currentState != GameState::PLAYING) return;
+        
         if (action == GLFW_PRESS && globalChunkManager != nullptr) {
             glm::ivec3 hitPos, prevPos;
             if (raycast(camera.position(), camera.front(), 8.0f, hitPos, prevPos)) {
@@ -68,8 +73,7 @@ namespace {
     }
 
     void processInput(GLFWwindow* window) {
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, true);
+        if (Config::currentState != GameState::PLAYING) return;
 
         float speed = Config::playerSpeed;
         if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed;
@@ -124,6 +128,8 @@ namespace {
     }
 
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+        if (Config::currentState != GameState::PLAYING) return;
+        
         if (firstMouse) {
             lastX = static_cast<float>(xpos);
             lastY = static_cast<float>(ypos);
@@ -158,7 +164,7 @@ int main() {
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
     glfwSetCursorPosCallback(window, mouseCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
     if (glewInit() != GLEW_OK) {
         std::cerr << "Failed to init GLEW\n";
@@ -174,6 +180,14 @@ int main() {
     
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
+    
+    // ImGui Initialization
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330 core");
 
     Shader shader("shaders/basic.vert", "shaders/basic.frag");
     if (shader.id() == 0) {
@@ -198,8 +212,34 @@ int main() {
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
+        // Global State Toggles (ESCAPE key)
+        static bool escapePressed = false;
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            if (!escapePressed) {
+                if (Config::currentState == GameState::PLAYING) {
+                    Config::currentState = GameState::PAUSED;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                } else if (Config::currentState == GameState::PAUSED) {
+                    Config::currentState = GameState::PLAYING;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                }
+                escapePressed = true;
+            }
+        } else {
+            escapePressed = false;
+        }
+
         processInput(window);
-        chunkManager.update(camera.position());
+        
+        // Start the Dear ImGui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        
+        if (Config::currentState == GameState::PLAYING) {
+            chunkManager.update(camera.position());
+        }
 
         // Use a much brighter, natural-looking sky color
         glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
@@ -254,9 +294,47 @@ int main() {
         // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
         chunkManager.render(shader.id(), camera);
 
+        // GUI Rendering
+        if (Config::currentState == GameState::MAIN_MENU) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+            ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            if (ImGui::Button("Play World", ImVec2(280, 40))) {
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            if (ImGui::Button("Quit Game", ImVec2(280, 40))) {
+                glfwSetWindowShouldClose(window, true);
+            }
+            ImGui::End();
+        } 
+        else if (Config::currentState == GameState::PAUSED) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+            ImGui::Begin("Game Paused", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            if (ImGui::Button("Resume", ImVec2(280, 40))) {
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            if (ImGui::Button("Save and Quit to Menu", ImVec2(280, 40))) {
+                Config::currentState = GameState::MAIN_MENU;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+            ImGui::End();
+        }
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
     glfwDestroyWindow(window);
     glfwTerminate();
