@@ -69,4 +69,7 @@ build_log.txt
 
 Docs/*.md
 Docs/*.txt
-assets/texture_packs/
+assets/texture_pack/
+assets/texture_packs/*.png
+assets/texture_packs/*.jpg
+assets/texture_packs/*.jpeg
