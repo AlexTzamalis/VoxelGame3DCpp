@@ -241,74 +241,143 @@ int main() {
             chunkManager.update(camera.position());
         }
 
-        // Use a much brighter, natural-looking sky color
-        glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
-        glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED) {
+            // Use a much brighter, natural-looking sky color
+            glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
+            glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        shader.use();
-        
-        shader.setMat4("view", camera.viewMatrix());
-        shader.setMat4("projection", camera.projectionMatrix());
-        
-        // Pass essential sky and fog values to the GPU
-        shader.setVec3("cameraPos", camera.position());
-        shader.setVec3("skyColor", skyColor);
-        
-        // Dynamically scale fog to the Render Distance!
-        float renderDistBlocks = Config::renderDistance * 16.0f;
-        shader.setFloat("fogEnd", renderDistBlocks);
-        shader.setFloat("fogStart", renderDistBlocks * 0.6f); // Fog begins 60% of the way to the edge
-
-        shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
-        shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
-        shader.setInt("textureAtlas", 0);
-
-        atlas.bind(0);
-        
-        // Calculate physics/AABB movement
-        auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
-            // Epsilon shrink to cleanly slide across block faces without getting snagged at float borders
-            int startX = std::floor(minB.x + 0.01f);
-            int endX   = std::floor(maxB.x - 0.01f);
-            int startY = std::floor(minB.y + 0.01f);
-            int endY   = std::floor(maxB.y - 0.01f);
-            int startZ = std::floor(minB.z + 0.01f);
-            int endZ   = std::floor(maxB.z - 0.01f);
+            shader.use();
             
-            for (int x = startX; x <= endX; x++) {
-                for (int y = startY; y <= endY; y++) {
-                    for (int z = startZ; z <= endZ; z++) {
-                        uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
-                        if (voxel > 1 && voxel != 5) return true; // Solid collision check
+            shader.setMat4("view", camera.viewMatrix());
+            shader.setMat4("projection", camera.projectionMatrix());
+            
+            // Pass essential sky and fog values to the GPU
+            shader.setVec3("cameraPos", camera.position());
+            shader.setVec3("skyColor", skyColor);
+            
+            // Dynamically scale fog to the Render Distance!
+            float renderDistBlocks = Config::renderDistance * 16.0f;
+            shader.setFloat("fogEnd", renderDistBlocks);
+            shader.setFloat("fogStart", renderDistBlocks * 0.6f); // Fog begins 60% of the way to the edge
+
+            shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
+            shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
+            shader.setInt("textureAtlas", 0);
+
+            atlas.bind(0);
+            
+            if (Config::currentState == GameState::PLAYING) {
+                // Calculate physics/AABB movement
+                auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
+                    // Epsilon shrink to cleanly slide across block faces without getting snagged at float borders
+                    int startX = std::floor(minB.x + 0.01f);
+                    int endX   = std::floor(maxB.x - 0.01f);
+                    int startY = std::floor(minB.y + 0.01f);
+                    int endY   = std::floor(maxB.y - 0.01f);
+                    int startZ = std::floor(minB.z + 0.01f);
+                    int endZ   = std::floor(maxB.z - 0.01f);
+                    
+                    for (int x = startX; x <= endX; x++) {
+                        for (int y = startY; y <= endY; y++) {
+                            for (int z = startZ; z <= endZ; z++) {
+                                uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
+                                if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                            }
+                        }
                     }
-                }
+                    return false;
+                };
+                camera.applyPhysics(deltaTime, checkCollisionCall);
+
+                // Update the Frustum boundary definitions based on currently moving camera coordinates
+                camera.updateFrustum();
             }
-            return false;
-        };
-        camera.applyPhysics(deltaTime, checkCollisionCall);
 
-        // Update the Frustum boundary definitions based on currently moving camera coordinates
-        camera.updateFrustum();
-
-        // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
-        chunkManager.render(shader.id(), camera);
+            // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
+            chunkManager.render(shader.id(), camera);
+        } else {
+            // Main Menu / Background Canvas (Dirt Brown color)
+            glClearColor(0.12f, 0.09f, 0.07f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
 
         // GUI Rendering
         if (Config::currentState == GameState::MAIN_MENU) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 240), ImGuiCond_Always);
             ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             if (ImGui::Button("Play World", ImVec2(280, 40))) {
                 Config::currentState = GameState::PLAYING;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 firstMouse = true;
             }
+            if (ImGui::Button("Create World", ImVec2(280, 40))) {
+                Config::currentState = GameState::CREATE_WORLD;
+            }
+            if (ImGui::Button("Settings", ImVec2(280, 40))) {
+                Config::currentState = GameState::SETTINGS;
+            }
+            ImGui::Separator();
             if (ImGui::Button("Quit Game", ImVec2(280, 40))) {
                 glfwSetWindowShouldClose(window, true);
             }
             ImGui::End();
         } 
+        else if (Config::currentState == GameState::CREATE_WORLD) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Always);
+            ImGui::Begin("Create New World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            static char worldName[64] = "My Beautiful World";
+            ImGui::InputText("World Name", worldName, IM_ARRAYSIZE(worldName));
+            
+            static int seed = 1337;
+            ImGui::InputInt("Seed", &seed);
+            
+            static int selectedMode = 1; // 0: Survival, 1: Creative, 2: Spectator
+            ImGui::Combo("Game Mode", &selectedMode, "Survival\0Creative\0Spectator\0");
+            
+            ImGui::Separator();
+            
+            if (ImGui::Button("Create & Play!", ImVec2(380, 40))) {
+                auto newMode = (selectedMode == 0) ? GameMode::SURVIVAL : ((selectedMode == 1) ? GameMode::CREATIVE : GameMode::SPECTATOR);
+                Config::currentMode = newMode;
+                // Note: Changing ChunkManager chunk seeding is planned for next iteration!
+                
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            if (ImGui::Button("Cancel", ImVec2(380, 40))) {
+                Config::currentState = GameState::MAIN_MENU;
+            }
+            ImGui::End();
+        }
+        else if (Config::currentState == GameState::SETTINGS) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400, 380), ImGuiCond_Always);
+            ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            ImGui::Text("Video / Rendering");
+            ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
+            ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
+            if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
+                camera.setFov(Config::cameraFov);
+            }
+            
+            ImGui::Separator();
+            ImGui::Text("Controls");
+            ImGui::SliderFloat("Player Speed", &Config::playerSpeed, 2.0f, 20.0f);
+            ImGui::SliderFloat("Sprint Speed", &Config::playerSprintSpeed, 5.0f, 50.0f);
+            ImGui::SliderFloat("Mouse Sensitivity", &Config::mouseSensitivity, 0.05f, 0.5f);
+            
+            ImGui::Separator();
+            if (ImGui::Button("Back", ImVec2(380, 40))) {
+                Config::currentState = GameState::MAIN_MENU;
+            }
+            ImGui::End();
+        }
         else if (Config::currentState == GameState::PAUSED) {
             ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);

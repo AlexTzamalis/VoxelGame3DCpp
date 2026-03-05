@@ -8,6 +8,8 @@ enum class GameMode {
 
 enum class GameState {
     MAIN_MENU,
+    CREATE_WORLD,
+    SETTINGS,
     PLAYING,
     PAUSED
 };

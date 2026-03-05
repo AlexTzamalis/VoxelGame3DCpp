@@ -106,13 +106,13 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                 if (globalY < height) {
                     float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
                     
-                    // Ridged noise produces peaks near 1.0 continuously
-                    float tunnelThreshold = 0.85f;
+                    // Natural FBm threshold mapping
+                    float tunnelThreshold = 0.5f;
                     
                     // Decrease cave likelihood near the surface to prevent swiss cheese mountains
                     float depth = height - globalY;
                     if (depth < 15.0f) {
-                        tunnelThreshold += (15.0f - depth) * 0.05f; // Pushes limit > 1.0 (No caves on surface)
+                        tunnelThreshold += (15.0f - depth) * 0.05f; // Pushes limit higher near surface
                     }
                     
                     if (globalY > -95 && caveVal > tunnelThreshold) {
