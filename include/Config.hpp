@@ -12,7 +12,8 @@ enum class GameState {
     CREATE_WORLD,
     SETTINGS,
     PLAYING,
-    PAUSED
+    PAUSED,
+    COMMAND_INPUT
 };
 
 namespace Config {
@@ -31,6 +32,11 @@ namespace Config {
     extern int renderDistance;
     extern int renderDistanceY;
     extern bool frustumCulling;
+
+    // Graphics & Shaders Settings
+    extern bool enableShaders;
+    extern bool enableShadows;
+    extern float dayTimeSpeed;
 
     // Load & Save to disk
     void load();

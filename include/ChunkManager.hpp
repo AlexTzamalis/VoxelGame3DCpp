@@ -30,7 +30,7 @@ public:
     ~ChunkManager();
 
     void update(const glm::vec3& cameraPosition);
-    void render(unsigned int shaderProgram, const Camera& camera) const;
+    void render(unsigned int shaderProgram, const Camera& camera, bool bypassFrustum = false, float radialDistLimit = -1.0f) const;
 
     void clear();
     bool isChunkColumnLoaded(int cx, int cz) const;
