@@ -60,8 +60,7 @@ const float FACE_VERTICES[6][4][8] = {
 };
 
 Chunk::Chunk(glm::ivec3 position) : position_(position) {
-    voxels_.resize(PADDED_SIZE * PADDED_SIZE * PADDED_SIZE, 0);
-    // Generation logic is now handled fully by ChunkManager via generateTerrain
+    // Memory is dynamically allocated on demand in setVoxel to save 90%+ RAM!
 }
 
 Chunk::~Chunk() {
@@ -75,11 +74,16 @@ uint8_t Chunk::getVoxel(int x, int y, int z) const {
     if (x < -1 || x > CHUNK_SIZE || y < -1 || y > CHUNK_SIZE || z < -1 || z > CHUNK_SIZE) {
         return 0; // Air outside
     }
+    if (voxels_.empty()) return 1; // Default to Base Air if unallocated
     return voxels_[getIndex(x, y, z)];
 }
 
 void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
     if (x >= -1 && x <= CHUNK_SIZE && y >= -1 && y <= CHUNK_SIZE && z >= -1 && z <= CHUNK_SIZE) {
+        if (voxels_.empty()) {
+            if (type <= 1) return; // Never allocate 5.8KB memory just for Air blocks
+            voxels_.resize(PADDED_SIZE * PADDED_SIZE * PADDED_SIZE, 1);
+        }
         voxels_[getIndex(x, y, z)] = type;
     }
 }
@@ -326,7 +330,7 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
 void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int height) {
     if (type <= 1) return; 
     
-    int startIdx = vertices_.size() / 13; // 13 floats per vertex (Pos, Norm, UV+Layer, Color)
+    int startIdx = vertices_.size();
 
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 
@@ -369,26 +373,23 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
             vy -= 0.15f;
         }
         
-        float nx = FACE_VERTICES[dir][i][3];
-        float ny = FACE_VERTICES[dir][i][4];
-        float nz = FACE_VERTICES[dir][i][5];
-        
-        float bu = FACE_VERTICES[dir][i][6] * width;
-        float bv = FACE_VERTICES[dir][i][7] * height;
+        uint32_t packedData = (dir & 0x7) | 
+                              ((width & 0x1F) << 3) | 
+                              ((height & 0x1F) << 8) | 
+                              ((static_cast<uint32_t>(layer) & 0xFFFF) << 13) | 
+                              ((i & 0x3) << 29);
 
-        vertices_.push_back(vx);
-        vertices_.push_back(vy);
-        vertices_.push_back(vz);
-        vertices_.push_back(nx);
-        vertices_.push_back(ny);
-        vertices_.push_back(nz);
-        vertices_.push_back(bu);
-        vertices_.push_back(bv);
-        vertices_.push_back(layer);
-        vertices_.push_back(r);
-        vertices_.push_back(g);
-        vertices_.push_back(b);
-        vertices_.push_back(a);
+        VoxelVertex vertex;
+        vertex.x = vx;
+        vertex.y = vy;
+        vertex.z = vz;
+        vertex.data = packedData;
+        vertex.r = static_cast<uint8_t>(r * 255.0f);
+        vertex.g = static_cast<uint8_t>(g * 255.0f);
+        vertex.b = static_cast<uint8_t>(b * 255.0f);
+        vertex.a = static_cast<uint8_t>(a * 255.0f);
+
+        vertices_.push_back(vertex);
     }
     
     if (type == 5 || type == 7) { 

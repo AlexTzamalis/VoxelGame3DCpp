@@ -9,7 +9,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <queue>
+#include <vector>
 #include <condition_variable>
 #include <atomic>
 #include <glm/glm.hpp>
@@ -39,7 +39,7 @@ struct ChunkColumn {
     ChunkColumn(glm::ivec2 pos);
     ~ChunkColumn();
     
-    void updateBuffers(const std::vector<float>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices);
+    void updateBuffers(const std::vector<VoxelVertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices);
     void render() const;
     void renderTransparent() const;
 };
@@ -70,7 +70,7 @@ private:
     
     // Multi-Threading Data Structures
     std::vector<std::thread> workers_;
-    std::queue<glm::ivec3> pendingTasks_;
+    std::vector<glm::ivec3> pendingTasks_;
     std::mutex queueMutex_;
     std::condition_variable cv_;
     std::atomic<bool> isRunning_;

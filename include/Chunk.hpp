@@ -1,8 +1,17 @@
 #pragma once
 
 #include <vector>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include "FastNoiseLite.h"
+
+#pragma pack(push, 1)
+struct VoxelVertex {
+    float x, y, z;
+    uint32_t data;
+    uint8_t r, g, b, a;
+};
+#pragma pack(pop)
 
 class Chunk {
 public:
@@ -25,7 +34,7 @@ public:
     void generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise);
     void generateMesh();
     // Mesh data access for ChunkColumn
-    const std::vector<float>& getVertices() const { return vertices_; }
+    const std::vector<VoxelVertex>& getVertices() const { return vertices_; }
     const std::vector<unsigned int>& getIndices() const { return indices_; }
     const std::vector<unsigned int>& getTransparentIndices() const { return transparentIndices_; }
 
@@ -39,7 +48,7 @@ private:
     glm::ivec3 position_;
     std::vector<uint8_t> voxels_;
 
-    std::vector<float> vertices_;
+    std::vector<VoxelVertex> vertices_;
     std::vector<unsigned int> indices_;
     std::vector<unsigned int> transparentIndices_;
 };

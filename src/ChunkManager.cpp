@@ -15,7 +15,7 @@ ChunkColumn::~ChunkColumn() {
     }
 }
 
-void ChunkColumn::updateBuffers(const std::vector<float>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices) {
+void ChunkColumn::updateBuffers(const std::vector<VoxelVertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<unsigned int>& transIndices) {
     if (vao == 0) {
         glGenVertexArrays(1, &vao);
         glGenBuffers(1, &vbo);
@@ -24,7 +24,7 @@ void ChunkColumn::updateBuffers(const std::vector<float>& vertices, const std::v
 
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(VoxelVertex), vertices.data(), GL_STATIC_DRAW);
     
     std::vector<unsigned int> allIndices = indices;
     allIndices.insert(allIndices.end(), transIndices.begin(), transIndices.end());
@@ -32,14 +32,12 @@ void ChunkColumn::updateBuffers(const std::vector<float>& vertices, const std::v
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
     
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT, sizeof(VoxelVertex), (void*)12);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(6 * sizeof(float)));
+    glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(VoxelVertex), (void*)16);
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 13 * sizeof(float), (void*)(9 * sizeof(float)));
-    glEnableVertexAttribArray(3);
     
     glBindVertexArray(0);
     
@@ -90,8 +88,8 @@ void ChunkManager::workerThreadFunc() {
 
             if (!isRunning_ && pendingTasks_.empty()) return;
 
-            taskPos = pendingTasks_.front();
-            pendingTasks_.pop();
+            taskPos = pendingTasks_.back();
+            pendingTasks_.pop_back();
         }
 
         // 1. Base terrain height (Continents / Hills)
@@ -163,6 +161,8 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // Keep track of which chunks are valid and within render distance this frame
     std::unordered_map<glm::ivec3, bool, IVec3Hash> activeChunks;
 
+    std::vector<glm::ivec3> newTasks;
+
     for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
         for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
             
@@ -180,14 +180,22 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                 // If it's missing entirely (not loaded, and not generating currently)
                 if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
                     generatingChunks_[chunkPos] = true; // Mark as started
-                    {
-                        std::lock_guard<std::mutex> lock(queueMutex_);
-                        pendingTasks_.push(chunkPos);
-                    }
-                    cv_.notify_one();
+                    newTasks.push_back(chunkPos);
                 }
             }
         }
+    }
+    
+    if (!newTasks.empty()) {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
+        // Sort DESCENDING so the closest chunks are placed at the back and popped first by worker threads
+        std::sort(pendingTasks_.begin(), pendingTasks_.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
+            float distA = (a.x - cameraChunkPos.x)*(a.x - cameraChunkPos.x) + (a.y - cameraChunkPos.y)*(a.y - cameraChunkPos.y) + (a.z - cameraChunkPos.z)*(a.z - cameraChunkPos.z);
+            float distB = (b.x - cameraChunkPos.x)*(b.x - cameraChunkPos.x) + (b.y - cameraChunkPos.y)*(b.y - cameraChunkPos.y) + (b.z - cameraChunkPos.z)*(b.z - cameraChunkPos.z);
+            return distA > distB;
+        });
+        cv_.notify_all();
     }
 
     // Unload chunks outside radius
@@ -209,7 +217,7 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // Clean up empty columns and update modified columns
     for (auto it = columns_.begin(); it != columns_.end(); ) {
         if (it->second->needsUpdate) {
-            std::vector<float> allVerts;
+            std::vector<VoxelVertex> allVerts;
             std::vector<unsigned int> allInds;
             std::vector<unsigned int> allTrans;
             
@@ -219,7 +227,7 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                  auto cit = chunks_.find(pos);
                  if (cit != chunks_.end()) {
                       hasAnyChunk = true;
-                      unsigned int baseVert = allVerts.size() / 13;
+                      unsigned int baseVert = allVerts.size();
                       const auto& cVerts = cit->second->getVertices();
                       const auto& cInds = cit->second->getIndices();
                       const auto& cTrans = cit->second->getTransparentIndices();
@@ -351,8 +359,7 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
 void ChunkManager::clear() {
     std::lock_guard<std::mutex> lock1(queueMutex_);
     std::lock_guard<std::mutex> lock2(readyMutex_);
-    std::queue<glm::ivec3> emptyQueue;
-    std::swap(pendingTasks_, emptyQueue);
+    pendingTasks_.clear();
     readyChunks_.clear();
     
     // Save any outstanding dirty chunks to disk as the world closes completely
