@@ -90,6 +90,24 @@ namespace {
         return false;
     }
 
+    bool isIntersectingPlayer(glm::vec3 playerPos, glm::ivec3 blockPos) {
+        float eyeOffsetY = 1.6f;
+        glm::vec3 playerFeet = playerPos;
+        playerFeet.y -= eyeOffsetY;
+        
+        float px1 = playerFeet.x - 0.3f; float px2 = playerFeet.x + 0.3f;
+        float py1 = playerFeet.y;        float py2 = playerFeet.y + 1.8f;
+        float pz1 = playerFeet.z - 0.3f; float pz2 = playerFeet.z + 0.3f;
+
+        float bx1 = blockPos.x; float bx2 = blockPos.x + 1.0f;
+        float by1 = blockPos.y; float by2 = blockPos.y + 1.0f;
+        float bz1 = blockPos.z; float bz2 = blockPos.z + 1.0f;
+
+        return (px1 < bx2 && px2 > bx1) &&
+               (py1 < by2 && py2 > by1) &&
+               (pz1 < bz2 && pz2 > bz1);
+    }
+
     void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
         if (Config::currentState != GameState::PLAYING) return;
         
@@ -101,7 +119,9 @@ namespace {
                 } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
                     uint8_t holding = playerInventory.getSelectedBlock();
                     if (holding != 0) {
-                        globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, holding); // Place
+                        if (!isIntersectingPlayer(camera.position(), prevPos)) {
+                            globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, holding); // Place
+                        }
                     }
                 }
             }
@@ -383,11 +403,12 @@ int main() {
 
         // Draw Player Live UI Overlay inside playing mode loop
         if (Config::currentState == GameState::PLAYING) {
-            // Draw floating + crosshair cursor in center!
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 10, Config::windowHeight / 2.0f - 10), ImGuiCond_Always);
-            ImGui::Begin("Crosshair", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoMouseInputs | ImGuiWindowFlags_NoSavedSettings);
-            ImGui::Text("+");
-            ImGui::End();
+            // perfectly centered mathematical Crosshair
+            ImDrawList* bgDrawList = ImGui::GetBackgroundDrawList();
+            ImVec2 center(Config::windowWidth * 0.5f, Config::windowHeight * 0.5f);
+            float crosshairSize = 10.0f;
+            bgDrawList->AddLine(ImVec2(center.x - crosshairSize, center.y), ImVec2(center.x + crosshairSize, center.y), IM_COL32(255, 255, 255, 200), 2.0f);
+            bgDrawList->AddLine(ImVec2(center.x, center.y - crosshairSize), ImVec2(center.x, center.y + crosshairSize), IM_COL32(255, 255, 255, 200), 2.0f);
 
             // Hotbar Rendering
             ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - (9.0f * 50.0f) / 2.0f, Config::windowHeight - 80.0f), ImGuiCond_Always);
