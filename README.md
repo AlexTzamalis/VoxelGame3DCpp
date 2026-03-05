@@ -10,14 +10,16 @@ This project serves as a foundational voxel rendering engine focused on efficien
 ![OpenGL](https://img.shields.io/badge/OpenGL-%23FFFFFF.svg?style=for-the-badge&logo=opengl)
 ![CMake](https://img.shields.io/badge/CMake-%23008FBA.svg?style=for-the-badge&logo=cmake&logoColor=white)
 
-The engine is engineered with a lean, performant stack aimed at deep graphics control:
+The engine is engineered with a lean, performant stack aimed at deep graphics control and game logic extensibility:
 
-- **C++17:** Core engine logic, memory management, and multi-threading capabilities.
+- **C++17:** Core engine logic, robust memory management, and multi-threading execution.
 - **OpenGL 3.3+ (Core Profile):** Hardware-accelerated 3D graphics API.
-- **GLFW:** Multi-platform window creation, context management, and input handling.
-- **GLEW:** OpenGL extension loading.
+- **GLFW & GLEW:** Multi-platform window state, context management, input handling, and OpenGL extension loading.
 - **GLM:** Mathematics library tailored for graphics software (vectors, matrices, MVP transformations).
-- **CMake:** Cross-platform build system generation.
+- **Dear ImGui:** Immediate-mode GUI library powering modern overlays, inventory layout, and customizable settings menus.
+- **FastNoiseLite:** Fast, high-performance noise generation algorithm utilized for seamless procedural world and terrain generation.
+- **stb_image:** Lightweight, efficient image loader for compiling sprite and block texture atlases.
+- **CMake:** Cross-platform build system generation with automated dependency fetching.
 
 ## Key Technical Objectives
 
@@ -25,6 +27,8 @@ The engine is engineered with a lean, performant stack aimed at deep graphics co
 - **Multi-Threading:** Offloading chunk generation and meshing logic from the main rendering thread to ensure stable frame rates and eliminate load stutter.
 - **Resource Management:** Single texture atlas implementation and intelligent object pooling to eliminate texture thrashing and minimize runtime allocations.
 - **Camera & Frustum Culling:** Smooth, 6-DoF capable 3D navigation that actively skips GPU uploads for out-of-view geometry.
+- **Procedural Generation:** Utilizing seed-based noise algorithms to create dynamically expanding, unique voxel worlds on the fly.
+- **Dynamic UI Systems:** Expandable, intuitive graphical systems such as a robust inventory array, quick-access hotbar, and real-time settings configurations.
 
 ## Building and Running
 
