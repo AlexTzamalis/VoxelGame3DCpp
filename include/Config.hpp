@@ -31,6 +31,11 @@ namespace Config {
     extern int renderDistance;
     extern int renderDistanceY;
     extern bool frustumCulling;
+
+    // Load & Save to disk
+    void load();
+    void save();
+    
     extern float fogDensity;
     
     // Game State

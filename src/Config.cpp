@@ -1,4 +1,7 @@
 #include "Config.hpp"
+#include <fstream>
+#include <iostream>
+#include <string>
 
 namespace Config {
     // Defaults that we can later load from a settings.json file
@@ -20,4 +23,31 @@ namespace Config {
     GameState currentState = GameState::MAIN_MENU;
     int currentWorldType = 0;
     int currentSeed = 1337;
+
+    void load() {
+        std::ifstream file("settings.ini");
+        if (file.is_open()) {
+            std::string key;
+            while(file >> key) {
+                if (key == "RENDER_DISTANCE") file >> renderDistance;
+                else if (key == "RENDER_DISTANCE_Y") file >> renderDistanceY;
+                else if (key == "FOV") file >> cameraFov;
+                else if (key == "PLAYER_SPEED") file >> playerSpeed;
+                else if (key == "SPRINT_SPEED") file >> playerSprintSpeed;
+                else if (key == "SENSITIVITY") file >> mouseSensitivity;
+            }
+        }
+    }
+
+    void save() {
+        std::ofstream file("settings.ini");
+        if (file.is_open()) {
+            file << "RENDER_DISTANCE " << renderDistance << "\n"
+                 << "RENDER_DISTANCE_Y " << renderDistanceY << "\n"
+                 << "FOV " << cameraFov << "\n"
+                 << "PLAYER_SPEED " << playerSpeed << "\n"
+                 << "SPRINT_SPEED " << playerSprintSpeed << "\n"
+                 << "SENSITIVITY " << mouseSensitivity << "\n";
+        }
+    }
 }

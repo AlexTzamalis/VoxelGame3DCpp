@@ -163,7 +163,7 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                             setVoxel(x, y, z, 3); // Dirt
                         } else {
                             // Pseudo-random Ore (Type 8) vs Stone (Type 4)
-                            if (globalY < 25 && ((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17) % 100 < 3) {
+                            if (globalY < 25 && ((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17 + Config::currentSeed) % 100 < 3) {
                                 setVoxel(x, y, z, 8); // Coal Ore
                             } else {
                                 setVoxel(x, y, z, 4); // Deep Stone
@@ -179,8 +179,8 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                     
                     // Forest System (Sparse, highly randomized Deterministic Trees)
                     // Better avalanche hash function to completely prevent linear "Tree Snakes"
-                    uint32_t mixX = (uint32_t)std::abs((int)globalX);
-                    uint32_t mixZ = (uint32_t)std::abs((int)globalZ);
+                    uint32_t mixX = (uint32_t)std::abs((int)globalX + Config::currentSeed * 7);
+                    uint32_t mixZ = (uint32_t)std::abs((int)globalZ + Config::currentSeed * 13);
                     uint32_t hashValue = (mixX * 374761393U ^ mixZ * 668265263U);
                     hashValue = (hashValue ^ (hashValue >> 13)) * 1274126177U;
                     
@@ -197,8 +197,8 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                         for(int dz = -2; dz <= 2 && !isLeaf; ++dz) {
                             int tx = globalX + dx;
                             int tz = globalZ + dz;
-                            uint32_t tMixX = (uint32_t)std::abs(tx);
-                            uint32_t tMixZ = (uint32_t)std::abs(tz);
+                            uint32_t tMixX = (uint32_t)std::abs(tx + Config::currentSeed * 7);
+                            uint32_t tMixZ = (uint32_t)std::abs(tz + Config::currentSeed * 13);
                             uint32_t tHash = (tMixX * 374761393U ^ tMixZ * 668265263U);
                             tHash = (tHash ^ (tHash >> 13)) * 1274126177U;
                             

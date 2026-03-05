@@ -4,6 +4,7 @@
 #include "ChunkManager.hpp"
 #include "Config.hpp"
 #include "WorldManager.hpp"
+#include "Inventory.hpp"
 #include <GL/glew.h>
 #include <algorithm>
 #include <GLFW/glfw3.h>
@@ -23,30 +24,67 @@ namespace {
     float lastY = Config::windowHeight / 2.0f;
     bool firstMouse = true;
 
-    Camera camera(glm::vec3(0.0f, 60.0f, 5.0f));
+    Camera camera(glm::vec3(0.0f, 120.0f, 5.0f));
     ChunkManager* globalChunkManager = nullptr;
+    Inventory playerInventory;
 
     bool raycast(glm::vec3 start, glm::vec3 direction, float maxDistance, glm::ivec3& hitPos, glm::ivec3& prevPos) {
-        glm::vec3 current = start;
-        glm::vec3 step = direction * 0.05f; 
-        
-        glm::ivec3 lastIntPos(std::floor(current.x), std::floor(current.y), std::floor(current.z));
-        float distance = 0.0f;
+        // Fast Voxel Traversal (DDA) Algorithm by Amanatides & Woo
+        int stepX = (direction.x > 0) ? 1 : ((direction.x < 0) ? -1 : 0);
+        int stepY = (direction.y > 0) ? 1 : ((direction.y < 0) ? -1 : 0);
+        int stepZ = (direction.z > 0) ? 1 : ((direction.z < 0) ? -1 : 0);
 
-        while (distance < maxDistance) {
-            current += step;
-            distance += 0.05f;
-            
-            glm::ivec3 intPos(std::floor(current.x), std::floor(current.y), std::floor(current.z));
-            
-            if (intPos != lastIntPos) {
-                uint8_t voxel = globalChunkManager->getVoxelGlobal(intPos.x, intPos.y, intPos.z);
-                if (voxel > 1 && voxel != 5) { // Solid blocks only (ignore transparent Air=1 and Water=5)
-                    hitPos = intPos;
-                    prevPos = lastIntPos;
-                    return true;
+        glm::vec3 tDelta(
+            (stepX != 0) ? std::abs(1.0f / direction.x) : std::numeric_limits<float>::infinity(),
+            (stepY != 0) ? std::abs(1.0f / direction.y) : std::numeric_limits<float>::infinity(),
+            (stepZ != 0) ? std::abs(1.0f / direction.z) : std::numeric_limits<float>::infinity()
+        );
+
+        glm::ivec3 voxel(std::floor(start.x), std::floor(start.y), std::floor(start.z));
+        
+        glm::vec3 tMax(
+            (stepX > 0) ? (voxel.x + 1.0f - start.x) * tDelta.x : (start.x - voxel.x) * tDelta.x,
+            (stepY > 0) ? (voxel.y + 1.0f - start.y) * tDelta.y : (start.y - voxel.y) * tDelta.y,
+            (stepZ > 0) ? (voxel.z + 1.0f - start.z) * tDelta.z : (start.z - voxel.z) * tDelta.z
+        );
+
+        int lastStepAxis = 0; // 0=X, 1=Y, 2=Z
+        
+        for (int i = 0; i < maxDistance * 3.0f; ++i) { // Bound to prevent infinite loops when pointing to void
+            uint8_t currentBlock = globalChunkManager->getVoxelGlobal(voxel.x, voxel.y, voxel.z);
+            if (currentBlock > 1 && currentBlock != 5) { // Stop at solid surfaces
+                hitPos = voxel;
+                prevPos = voxel;
+                if (lastStepAxis == 0) prevPos.x -= stepX;
+                else if (lastStepAxis == 1) prevPos.y -= stepY;
+                else /* 2 */ prevPos.z -= stepZ;
+                return true;
+            }
+
+            if (tMax.x < tMax.y) {
+                if (tMax.x < tMax.z) {
+                    voxel.x += stepX;
+                    if (tMax.x > maxDistance) return false;
+                    tMax.x += tDelta.x;
+                    lastStepAxis = 0;
+                } else {
+                    voxel.z += stepZ;
+                    if (tMax.z > maxDistance) return false;
+                    tMax.z += tDelta.z;
+                    lastStepAxis = 2;
                 }
-                lastIntPos = intPos;
+            } else {
+                if (tMax.y < tMax.z) {
+                    voxel.y += stepY;
+                    if (tMax.y > maxDistance) return false;
+                    tMax.y += tDelta.y;
+                    lastStepAxis = 1;
+                } else {
+                    voxel.z += stepZ;
+                    if (tMax.z > maxDistance) return false;
+                    tMax.z += tDelta.z;
+                    lastStepAxis = 2;
+                }
             }
         }
         return false;
@@ -59,9 +97,12 @@ namespace {
             glm::ivec3 hitPos, prevPos;
             if (raycast(camera.position(), camera.front(), 8.0f, hitPos, prevPos)) {
                 if (button == GLFW_MOUSE_BUTTON_LEFT) {
-                    globalChunkManager->setVoxelGlobal(hitPos.x, hitPos.y, hitPos.z, 1); // 1 = Air
+                    globalChunkManager->setVoxelGlobal(hitPos.x, hitPos.y, hitPos.z, 1); // Delete (Set Air)
                 } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                    globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, 4); // 4 = Stone
+                    uint8_t holding = playerInventory.getSelectedBlock();
+                    if (holding != 0) {
+                        globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, holding); // Place
+                    }
                 }
             }
         }
@@ -127,6 +168,31 @@ namespace {
         if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS) {
             if (!f3Pressed) { Config::currentMode = GameMode::SURVIVAL; f3Pressed = true; }
         } else { f3Pressed = false; }
+        // Hotbar selection map
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) playerInventory.setSelectedHotbar(0);
+        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) playerInventory.setSelectedHotbar(1);
+        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) playerInventory.setSelectedHotbar(2);
+        if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) playerInventory.setSelectedHotbar(3);
+        if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) playerInventory.setSelectedHotbar(4);
+        if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS) playerInventory.setSelectedHotbar(5);
+        if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) playerInventory.setSelectedHotbar(6);
+        if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) playerInventory.setSelectedHotbar(7);
+        if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) playerInventory.setSelectedHotbar(8);
+
+        // Open Inventory
+        static bool ePressed = false;
+        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+            if (!ePressed) {
+                playerInventory.isVisible = !playerInventory.isVisible;
+                if (playerInventory.isVisible) {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                } else {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                }
+                ePressed = true;
+            }
+        } else { ePressed = false; }
     }
 
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -141,12 +207,15 @@ namespace {
         float dy = lastY - static_cast<float>(ypos);
         lastX = static_cast<float>(xpos);
         lastY = static_cast<float>(ypos);
+        if (playerInventory.isVisible) return; // Freeze view if managing inventory!
+        
         camera.rotate(dx * Config::mouseSensitivity, dy * Config::mouseSensitivity);
     }
 }
 
 int main() {
     WorldManager::init();
+    Config::load(); // Load global user settings on start!
 
     if (!glfwInit()) {
         std::cerr << "Failed to init GLFW\n";
@@ -277,7 +346,7 @@ int main() {
                 int cz = std::floor(camera.position().z / Chunk::CHUNK_SIZE);
                 
                 bool isLoaded = chunkManager.isChunkColumnLoaded(cx, cz);
-                if (isLoaded) {
+                if (isLoaded || camera.position().y > 80.0f) { // Added height bypass to not get stuck above generation!
                     // Safe to apply gravity and collision sweeps without sinking into void
                     auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
                         int startX = std::floor(minB.x + 0.01f);
@@ -312,6 +381,71 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
 
+        // Draw Player Live UI Overlay inside playing mode loop
+        if (Config::currentState == GameState::PLAYING) {
+            // Draw floating + crosshair cursor in center!
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 10, Config::windowHeight / 2.0f - 10), ImGuiCond_Always);
+            ImGui::Begin("Crosshair", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoMouseInputs | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::Text("+");
+            ImGui::End();
+
+            // Hotbar Rendering
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - (9.0f * 50.0f) / 2.0f, Config::windowHeight - 80.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(9.0f * 50.0f, 65.0f), ImGuiCond_Always);
+            ImGui::Begin("Hotbar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+            
+            for (int i = 0; i < 9; ++i) {
+                if (i > 0) ImGui::SameLine();
+                uint8_t item = playerInventory.slots[i].itemID;
+                
+                // Active slot styling via Frame changes
+                if (playerInventory.selectedHotbarIndex == i) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.8f, 0.8f, 0.5f));
+                    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+                }
+                
+                std::string lbl = std::to_string(item) + "##btn" + std::to_string(i);
+                if (item == 0) lbl = " ##btn" + std::to_string(i); // Show space instead of 0 for air
+                
+                if (ImGui::Button(lbl.c_str(), ImVec2(40, 40))) {
+                    playerInventory.setSelectedHotbar(i);
+                }
+                
+                if (playerInventory.selectedHotbarIndex == i) {
+                    ImGui::PopStyleColor(2);
+                    ImGui::PopStyleVar();
+                }
+            }
+            ImGui::End();
+
+            // Draw full floating 27-slot Inventory Modal if E is Pressed
+            if (playerInventory.isVisible) {
+                ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+                ImGui::Begin("Inventory", &playerInventory.isVisible, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+                
+                for (int slot = 9; slot < 36; ++slot) {
+                    if ((slot - 9) % 9 != 0) ImGui::SameLine();
+                    
+                    uint8_t item = playerInventory.slots[slot].itemID;
+                    std::string lbl = std::to_string(item) + "##inv" + std::to_string(slot);
+                    if (item == 0) lbl = " ##inv" + std::to_string(slot);
+                    
+                    ImGui::Button(lbl.c_str(), ImVec2(24, 24));
+                    // Basic placeholder mechanics - drag drop can be added next loop
+                }
+                
+                ImGui::End();
+                
+                // Fix cursor visibility when manually X-ing out of the window or toggling boolean
+                if (!playerInventory.isVisible) {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                }
+            }
+        }
+
         // GUI Rendering
         if (Config::currentState == GameState::MAIN_MENU) {
             ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
@@ -325,6 +459,7 @@ int main() {
             }
             ImGui::Separator();
             if (ImGui::Button("Quit Game", ImVec2(280, 40))) {
+                Config::save();
                 glfwSetWindowShouldClose(window, true);
             }
             ImGui::End();
@@ -462,7 +597,8 @@ int main() {
             ImGui::SliderFloat("Mouse Sensitivity", &Config::mouseSensitivity, 0.05f, 0.5f);
             
             ImGui::Separator();
-            if (ImGui::Button("Back", ImVec2(380, 40))) {
+            if (ImGui::Button("Save & Back", ImVec2(380, 40))) {
+                Config::save();
                 Config::currentState = GameState::MAIN_MENU;
             }
             ImGui::End();
@@ -480,6 +616,7 @@ int main() {
                 WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
                 WorldManager::updatePlayTime();
                 chunkManager.clear(); // Flushes all modified chunks to disk securely!
+                Config::save(); // Persist video/audio settings as well
                 Config::currentState = GameState::MAIN_MENU;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
