@@ -15,9 +15,12 @@ namespace Config {
     float cameraFov = 75.0f; // Note: You'll want to update Camera.hpp to use this eventually
 
     int renderDistance = 12; // Adjusted down for better framerates on lower-end Systems
-    int renderDistanceY = 5; // Up/down chunk loading limit (Handles roughly Y: -30 to 130)
+    int renderDistanceY = 10; // Massively expanded max chunks rendered per column
     bool frustumCulling = true; // Future toggle
     float fogDensity = 0.005f; // Exponential fog density
+    bool enableShaders = true;
+    bool enableShadows = true;
+    float dayTimeSpeed = 0.0021816f; // Exactly 48 minutes per 24h cycle
     
     GameMode currentMode = GameMode::CREATIVE;
     GameState currentState = GameState::MAIN_MENU;
@@ -32,6 +35,10 @@ namespace Config {
                 if (key == "RENDER_DISTANCE") file >> renderDistance;
                 else if (key == "RENDER_DISTANCE_Y") file >> renderDistanceY;
                 else if (key == "FOV") file >> cameraFov;
+                else if (key == "MAX_FPS") file >> fpsCap;
+                else if (key == "ENABLE_SHADERS") file >> enableShaders;
+                else if (key == "ENABLE_SHADOWS") file >> enableShadows;
+                else if (key == "DAY_SPEED") file >> dayTimeSpeed;
                 else if (key == "PLAYER_SPEED") file >> playerSpeed;
                 else if (key == "SPRINT_SPEED") file >> playerSprintSpeed;
                 else if (key == "SENSITIVITY") file >> mouseSensitivity;
@@ -45,6 +52,10 @@ namespace Config {
             file << "RENDER_DISTANCE " << renderDistance << "\n"
                  << "RENDER_DISTANCE_Y " << renderDistanceY << "\n"
                  << "FOV " << cameraFov << "\n"
+                 << "MAX_FPS " << fpsCap << "\n"
+                 << "ENABLE_SHADERS " << enableShaders << "\n"
+                 << "ENABLE_SHADOWS " << enableShadows << "\n"
+                 << "DAY_SPEED " << dayTimeSpeed << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"
                  << "SPRINT_SPEED " << playerSprintSpeed << "\n"
                  << "SENSITIVITY " << mouseSensitivity << "\n";

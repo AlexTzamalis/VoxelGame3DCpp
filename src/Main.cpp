@@ -1,6 +1,7 @@
 #include "Camera.hpp"
 #include "Shader.hpp"
 #include "Texture.hpp"
+#include "TextureAtlas.hpp"
 #include "ChunkManager.hpp"
 #include "Config.hpp"
 #include "WorldManager.hpp"
@@ -13,6 +14,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <cmath>
+#include <thread>
+#include <chrono>
+#include <sstream>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -259,6 +263,9 @@ int main() {
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
+    // Disable raw driver VSync so we can process and sleep strictly mathematically below
+    glfwSwapInterval(0); 
+
     if (glewInit() != GLEW_OK) {
         std::cerr << "Failed to init GLEW\n";
         glfwDestroyWindow(window);
@@ -283,15 +290,39 @@ int main() {
     ImGui_ImplOpenGL3_Init("#version 330 core");
 
     Shader shader("shaders/basic.vert", "shaders/basic.frag");
-    if (shader.id() == 0) {
+    Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
+    
+    // --- Set up Shadow Map FBO ---
+    const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
+    unsigned int depthMapFBO;
+    glGenFramebuffers(1, &depthMapFBO);
+    
+    unsigned int depthMap;
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // Prevents black shadowing from repeating outside the light frustum
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (shader.id() == 0 || shadowShader.id() == 0) {
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
     }
 
-    Texture atlas;
-    if (!atlas.loadFromFile("assets/sprite-atlas-1.png")) {
-        std::cerr << "Texture atlas not found. Run from build directory.\n";
+    if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
+        std::cerr << "Dynamic Texture Pack loading failed! Ensure default.zip exists in assets/texture_packs/\n";
     }
 
     ChunkManager chunkManager;
@@ -316,11 +347,27 @@ int main() {
                     Config::currentState = GameState::PLAYING;
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                     firstMouse = true;
+                } else if (Config::currentState == GameState::COMMAND_INPUT) {
+                    Config::currentState = GameState::PLAYING;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
                 }
                 escapePressed = true;
             }
         } else {
             escapePressed = false;
+        }
+
+        // Command System Input (Slash key)
+        static bool slashPressed = false;
+        if (glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS) {
+            if (!slashPressed && Config::currentState == GameState::PLAYING && !playerInventory.isVisible) {
+                Config::currentState = GameState::COMMAND_INPUT;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                slashPressed = true;
+            }
+        } else {
+            slashPressed = false;
         }
 
         processInput(window);
@@ -334,31 +381,114 @@ int main() {
             chunkManager.update(camera.position());
         }
 
-        if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED) {
-            // Use a much brighter, natural-looking sky color
-            glm::vec3 skyColor = glm::vec3(0.47f, 0.65f, 1.0f);
+        if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED || Config::currentState == GameState::COMMAND_INPUT) {
+            // Day-Night Cycle calculations
+            float timeVal = static_cast<float>(glfwGetTime());
+            float dayPhase = timeVal * Config::dayTimeSpeed;
+            
+            // Vector pointing TOWARDS the sun
+            glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.3f));
+            float sunHeight = sunDir.y;
+
+            glm::vec3 daySky(0.47f, 0.65f, 1.0f);
+            glm::vec3 nightSky(0.01f, 0.02f, 0.05f); // Deep Space Blue
+            glm::vec3 sunsetSky(0.9f, 0.4f, 0.3f);   // Vibrant Orange
+            
+            glm::vec3 skyColor;
+            if (sunHeight > 0.2f) skyColor = daySky;
+            else if (sunHeight > 0.0f) skyColor = glm::mix(sunsetSky, daySky, sunHeight / 0.2f);
+            else if (sunHeight > -0.2f) skyColor = glm::mix(nightSky, sunsetSky, (sunHeight + 0.2f) / 0.2f);
+            else skyColor = nightSky;
+
+            glm::vec3 lightColor;
+            if (sunHeight > 0.2f) lightColor = glm::vec3(1.2f, 1.1f, 1.0f); // Bright Midday
+            else if (sunHeight > 0.0f) lightColor = glm::mix(glm::vec3(1.2f, 0.5f, 0.2f), glm::vec3(1.2f, 1.1f, 1.0f), sunHeight / 0.2f); // Golden Hour
+            else lightColor = glm::vec3(0.15f, 0.2f, 0.35f); // Piercing Moonlight tint
+
+            // Use the moon as the light source effectively if the sun is down
+            glm::vec3 shaderLightDir = sunHeight > 0.0f ? sunDir : glm::vec3(-sunDir.x, -sunDir.y, -sunDir.z); 
+
+            // Detect if camera is physically touching water
+            int camX = std::floor(camera.position().x);
+            int camY = std::floor(camera.position().y);
+            int camZ = std::floor(camera.position().z);
+            bool isUnderwater = (chunkManager.getVoxelGlobal(camX, camY, camZ) == 5);
+
+            if (isUnderwater && Config::enableShaders) {
+                skyColor = glm::vec3(0.04f, 0.12f, 0.35f); // Instant deep oceanic blue skybox
+            }
+
+            // PASS 1: SHADOW MAP RENDERING
+            float shadowDist = Config::renderDistance * 16.0f; 
+            glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
+            
+            glm::vec3 lightTarget = camera.position(); 
+            glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
+            
+            glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+            if (Config::enableShadows && Config::enableShaders) {
+                glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+                glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+                glClear(GL_DEPTH_BUFFER_BIT); // Depth buffer only
+                
+                shadowShader.use();
+                shadowShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+                shadowShader.setFloat("time", timeVal);
+                
+                glActiveTexture(GL_TEXTURE0);
+                TextureAtlas::bind(0);
+                shadowShader.setInt("textureAtlas", 0);
+                
+                // Bypass frustum checks entirely so chunks behind the camera cast shadows into frame,
+                // but heavily cull chunks outside the shadow texture bounds so we don't destroy CPU limit!
+                chunkManager.render(shadowShader.id(), camera, true, shadowDist * 1.5f);
+            }
+            
+            // PASS 2: NORMAL RENDERING
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            int fbW, fbH;
+            glfwGetFramebufferSize(window, &fbW, &fbH);
+            glViewport(0, 0, fbW, fbH);
+
             glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             shader.use();
             
+            shader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            shader.setInt("enableShaders", Config::enableShaders ? 1 : 0);
+            shader.setInt("enableShadows", Config::enableShadows ? 1 : 0);
+            
             shader.setMat4("view", camera.viewMatrix());
             shader.setMat4("projection", camera.projectionMatrix());
             
-            // Pass essential sky and fog values to the GPU
+            shader.setFloat("time", timeVal);
+            shader.setInt("isUnderwater", isUnderwater ? 1 : 0);
             shader.setVec3("cameraPos", camera.position());
             shader.setVec3("skyColor", skyColor);
             
-            // Dynamically scale fog to the Render Distance!
+            // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
-            shader.setFloat("fogEnd", renderDistBlocks);
-            shader.setFloat("fogStart", renderDistBlocks * 0.6f); // Fog begins 60% of the way to the edge
+            if (isUnderwater) {
+                shader.setFloat("fogStart", 0.0f);
+                shader.setFloat("fogEnd", 24.0f); // Quick fade when exploring oceans
+            } else {
+                shader.setFloat("fogStart", renderDistBlocks - 32.0f); // Minimalistic chunk-loading fog on the X-Z border
+                shader.setFloat("fogEnd", renderDistBlocks);
+            }
 
-            shader.setVec3("lightDir", glm::normalize(glm::vec3(0.5f, -1.0f, 0.3f)));
-            shader.setVec3("lightColor", glm::vec3(1.0f, 1.0f, 1.0f));
+            shader.setVec3("lightDir", shaderLightDir);
+            shader.setVec3("lightColor", lightColor);
+            
+            glActiveTexture(GL_TEXTURE0);
+            TextureAtlas::bind(0);
             shader.setInt("textureAtlas", 0);
 
-            atlas.bind(0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap);
+            shader.setInt("shadowMap", 1);
             
             if (Config::currentState == GameState::PLAYING) {
                 // Determine if chunk we are inside is fully generated
@@ -403,6 +533,14 @@ int main() {
 
         // Draw Player Live UI Overlay inside playing mode loop
         if (Config::currentState == GameState::PLAYING) {
+            
+            // Draw simple FPS counter exactly in top left
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.35f); // Transparent dark background
+            ImGui::Begin("FPS_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+            ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
+            ImGui::End();
+
             // perfectly centered mathematical Crosshair
             ImDrawList* bgDrawList = ImGui::GetBackgroundDrawList();
             ImVec2 center(Config::windowWidth * 0.5f, Config::windowHeight * 0.5f);
@@ -600,27 +738,62 @@ int main() {
             ImGui::End();
         }
         else if (Config::currentState == GameState::SETTINGS) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(400, 380), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(500, 420), ImGuiCond_Always);
             ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
-            ImGui::Text("Video / Rendering");
-            ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
-            ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
-            if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
-                camera.setFov(Config::cameraFov);
+            if (ImGui::BeginTabBar("SettingsTabs")) {
+                if (ImGui::BeginTabItem("Video")) {
+                    ImGui::Spacing();
+                    ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
+                    ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
+                    ImGui::SliderInt("Max FPS", &Config::fpsCap, 30, 240);
+                    if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
+                        camera.setFov(Config::cameraFov);
+                    }
+                    ImGui::EndTabItem();
+                }
+                
+                if (ImGui::BeginTabItem("Shaders")) {
+                    ImGui::Spacing();
+                    
+                    bool changedShaders = ImGui::Checkbox("Enable Advanced Shaders (Water, Fog, Radiosity)", &Config::enableShaders);
+                    
+                    if (Config::enableShaders) {
+                        ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &Config::enableShadows);
+                    } else {
+                        ImGui::BeginDisabled();
+                        bool f = false; ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &f);
+                        ImGui::EndDisabled();
+                    }
+                    
+                    // Allow UI to tweak Day / Night Speed dynamically
+                    // Display it slightly easier to read (multiplier over 24h)
+                    float currentHours = (0.0021816f / Config::dayTimeSpeed) * 0.8f; // ~1h baseline display
+                    if (ImGui::SliderFloat("Day Speed Mult", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {
+                        // Dynamically updates gameplay lighting loop above!
+                    }
+                    ImGui::TextDisabled("Default is 0.00218 (48 real-life minutes for 24h)");
+                    
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Controls")) {
+                    ImGui::Spacing();
+                    ImGui::SliderFloat("Player Speed", &Config::playerSpeed, 2.0f, 20.0f);
+                    ImGui::SliderFloat("Sprint Speed", &Config::playerSprintSpeed, 5.0f, 50.0f);
+                    ImGui::SliderFloat("Mouse Sensitivity", &Config::mouseSensitivity, 0.05f, 0.5f);
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
             
             ImGui::Separator();
-            ImGui::Text("Controls");
-            ImGui::SliderFloat("Player Speed", &Config::playerSpeed, 2.0f, 20.0f);
-            ImGui::SliderFloat("Sprint Speed", &Config::playerSprintSpeed, 5.0f, 50.0f);
-            ImGui::SliderFloat("Mouse Sensitivity", &Config::mouseSensitivity, 0.05f, 0.5f);
-            
-            ImGui::Separator();
-            if (ImGui::Button("Save & Back", ImVec2(380, 40))) {
+            if (ImGui::Button("Save & Back", ImVec2(480, 40))) {
                 Config::save();
-                Config::currentState = GameState::MAIN_MENU;
+                // If we accessed settings while paused, go back to pause menu!
+                if (!firstMouse) Config::currentState = GameState::PAUSED;
+                else Config::currentState = GameState::MAIN_MENU;
             }
             ImGui::End();
         }
@@ -633,6 +806,9 @@ int main() {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 firstMouse = true;
             }
+            if (ImGui::Button("Settings", ImVec2(280, 40))) {
+                Config::currentState = GameState::SETTINGS;
+            }
             if (ImGui::Button("Save and Quit to Menu", ImVec2(280, 40))) {
                 WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
                 WorldManager::updatePlayTime();
@@ -643,12 +819,69 @@ int main() {
             }
             ImGui::End();
         }
+        else if (Config::currentState == GameState::COMMAND_INPUT) {
+            ImGui::SetNextWindowPos(ImVec2(10, Config::windowHeight - 50), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(600, 40), ImGuiCond_Always);
+            ImGui::Begin("Command input", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+            
+            static char cmdBuf[256] = "";
+            if (ImGui::IsWindowAppearing()) {
+                ImGui::SetKeyboardFocusHere();
+                cmdBuf[0] = '/'; 
+                cmdBuf[1] = '\0';
+            }
+            if (ImGui::InputText("##cmd", cmdBuf, IM_ARRAYSIZE(cmdBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                std::string cmdStr(cmdBuf);
+                std::stringstream ss(cmdStr);
+                std::string token;
+                ss >> token;
+                
+                if (token == "/time") {
+                    double newTime;
+                    if (ss >> newTime) {
+                         glfwSetTime(newTime / Config::dayTimeSpeed); // Quick hack to set internal day phase
+                    }
+                } else if (token == "/speed") {
+                    float spd;
+                    if (ss >> spd) {
+                        Config::playerSpeed = spd;
+                        Config::playerSprintSpeed = spd * 1.5f;
+                    }
+                } else if (token == "/teleport") {
+                    float px, py, pz;
+                    if (ss >> px >> py >> pz) {
+                        camera.setPosition(glm::vec3(px, py, pz));
+                    }
+                } else if (token == "/locate") {
+                    std::string entity;
+                    ss >> entity;
+                    std::cout << "Locating " << entity << "..." << "\n";
+                    // Just print coordinate for now as placeholder
+                }
+                
+                cmdBuf[0] = '\0';
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            ImGui::End();
+        }
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapBuffers(window);
         glfwPollEvents();
+        
+        // Manual Frame Pacing & Latency Control
+        float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
+        float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
+        
+        if (frameTime < frameTarget) {
+            float sleepTime = frameTarget - frameTime;
+            // Sleep the core CPU thread to drop rendering cycles and smooth out GPU stutter!
+            std::this_thread::sleep_for(std::chrono::duration<float>(sleepTime));
+        }
     }
 
     ImGui_ImplOpenGL3_Shutdown();

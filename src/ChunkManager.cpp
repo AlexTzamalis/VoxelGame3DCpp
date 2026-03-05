@@ -107,8 +107,8 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             
             for (int y = -Config::renderDistanceY; y <= Config::renderDistanceY; ++y) {
                 // Hard floor/ceiling limits so we don't load memory infinitely up or deeply down below generation layer
-                if (cameraChunkPos.y + y < -7) continue; 
-                if (cameraChunkPos.y + y > 8) continue; // Allows peaks up to block 128
+                if (cameraChunkPos.y + y < -32) continue; // Allows up to Y:-512
+                if (cameraChunkPos.y + y > 16) continue;  // Allows up to Y:256
                 
                 glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
                 activeChunks[chunkPos] = true;
@@ -142,12 +142,23 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // For now we can ignore pruning generating jobs to keep logic simple, they will just get instantly deleted next frame
 }
 
-void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) const {
+void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool bypassFrustum, float radialDistLimit) const {
+    glm::vec3 camPos = camera.position();
+    float limitSq = radialDistLimit * radialDistLimit;
+
     // 1. OPAQUE RENDER PASS
     for (const auto& [pos, chunk] : chunks_) {
         glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
+        
+        // Optimize shadow cascades dropping chunks drastically out of shadow camera radius
+        if (radialDistLimit > 0.0f) {
+            float dx = minBound.x - camPos.x;
+            float dz = minBound.z - camPos.z;
+            if (dx * dx + dz * dz > limitSq) continue;
+        }
+
         glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
-        if (Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
+        if (!bypassFrustum && Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
         
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, minBound);
@@ -159,8 +170,15 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) cons
     // 2. TRANSPARENT RENDER PASS (Water & Leaves)
     for (const auto& [pos, chunk] : chunks_) {
         glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
+        
+        if (radialDistLimit > 0.0f) {
+            float dx = minBound.x - camPos.x;
+            float dz = minBound.z - camPos.z;
+            if (dx * dx + dz * dz > limitSq) continue;
+        }
+
         glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
-        if (Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
+        if (!bypassFrustum && Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
         
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, minBound);
@@ -203,6 +221,29 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         // Rebuild the mesh instantly on main thread for instantaneous player feedback
         it->second->generateMesh();
         it->second->updateBuffers();
+
+        // Update padding voxel data on direct neighboring faces!
+        auto checkNeighbor = [&](int dx, int dy, int dz) {
+            glm::ivec3 nPos = cPos + glm::ivec3(dx, dy, dz);
+            auto nIt = chunks_.find(nPos);
+            if (nIt != chunks_.end()) {
+                int nx = lx - dx * Chunk::CHUNK_SIZE;
+                int ny = ly - dy * Chunk::CHUNK_SIZE;
+                int nz = lz - dz * Chunk::CHUNK_SIZE;
+                // Directly set the hidden padding face inside the adjacent chunk!
+                nIt->second->setVoxel(nx, ny, nz, type);
+                
+                nIt->second->generateMesh();
+                nIt->second->updateBuffers();
+            }
+        };
+
+        if (lx == 0) checkNeighbor(-1, 0, 0);
+        if (lx == Chunk::CHUNK_SIZE - 1) checkNeighbor(1, 0, 0);
+        if (ly == 0) checkNeighbor(0, -1, 0);
+        if (ly == Chunk::CHUNK_SIZE - 1) checkNeighbor(0, 1, 0);
+        if (lz == 0) checkNeighbor(0, 0, -1);
+        if (lz == Chunk::CHUNK_SIZE - 1) checkNeighbor(0, 0, 1);
     }
 }
 
