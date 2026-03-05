@@ -92,16 +92,28 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
             float globalZ = position_.z * CHUNK_SIZE + z;
             
             float noiseVal = heightNoise.GetNoise(globalX, globalZ);
-            // Height range: smooth continents going from 10 to 45
-            int height = static_cast<int>((noiseVal + 1.0f) * 0.5f * 35.0f) + 10; 
+            
+            // Push values through an exponent to make plains flatter and mountains beautifully taller!
+            float n01 = (noiseVal + 1.0f) * 0.5f;
+            n01 = std::pow(n01, 1.25f);
+            
+            // Height range: smooth continents going from 40 to ~130
+            int height = static_cast<int>(n01 * 90.0f) + 40; 
 
             for (int y = -1; y <= CHUNK_SIZE; ++y) {
                 int globalY = position_.y * CHUNK_SIZE + y;
                 
                 if (globalY < height) {
                     float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
-                    // OpenSimplex2 ranges from -1 to 1. Using > 0.4 creates cavernous wormholes inside mountains
-                    if (globalY > 5 && caveVal > 0.4f) {
+                    
+                    // Decrease cave likelihood near the surface to prevent swiss cheese mountains
+                    float depth = height - globalY;
+                    float threshold = 0.45f;
+                    if (depth < 15.0f) {
+                        threshold += (15.0f - depth) * 0.05f; // Pushes threshold very high near surface
+                    }
+                    
+                    if (globalY > -95 && caveVal > threshold) {
                         setVoxel(x, y, z, 1); // Hollow Air Cave
                     } else {
                         // Terrain placement (Dirt/Grass/Stone/Ores)
@@ -120,32 +132,33 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                         }
                     }
                 } 
-                else if (globalY <= 14) {
+                else if (globalY <= 63) {
                     setVoxel(x, y, z, 5); // Sea Level Water
                 } 
                 else {
                     setVoxel(x, y, z, 1); // Base Air
                     
-                    // Forest System (Deterministic Trees)
-                    int treeHash = std::abs((int)globalX * 311 + (int)globalZ * 179) % 100;
-                    if (height > 14 && treeHash < 2) { // 2% chance of tree trunk per surface tile
+                    // Forest System (Sparse, highly randomized Deterministic Trees)
+                    int treeHash = std::abs((int)globalX * 9871 + (int)globalZ * 3457) % 500;
+                    if (height > 63 && treeHash < 3) { // 0.6% chance of tree trunk per surface tile
                         if (globalY >= height && globalY <= height + 4) {
                             setVoxel(x, y, z, 6); // Wood Trunk
                             continue;
                         }
                     }
                     
-                    // Tree Leaves Algorithm (If near a tree trunk, spawn leaf clusters!)
+                    // Tree Leaves Algorithm
                     bool isLeaf = false;
                     for(int dx = -2; dx <= 2 && !isLeaf; ++dx) {
                         for(int dz = -2; dz <= 2 && !isLeaf; ++dz) {
                             int tx = globalX + dx;
                             int tz = globalZ + dz;
-                            int tHash = std::abs(tx * 311 + tz * 179) % 100;
-                            if (tHash < 2) {
+                            int tHash = std::abs(tx * 9871 + tz * 3457) % 500;
+                            if (tHash < 3) {
                                 float tNoise = heightNoise.GetNoise((float)tx, (float)tz);
-                                int tHeight = static_cast<int>((tNoise + 1.0f) * 0.5f * 35.0f) + 10; 
-                                if (tHeight > 14) {
+                                float tn01 = std::pow((tNoise + 1.0f) * 0.5f, 1.25f);
+                                int tHeight = static_cast<int>(tn01 * 90.0f) + 40; 
+                                if (tHeight > 63) {
                                     int dy = globalY - tHeight;
                                     if (dy >= 3 && dy <= 5) { // Leaves populate height 3 to 5 above the trunk base
                                         if (dy == 5 && (std::abs(dx) == 2 || std::abs(dz) == 2)) continue; // Round off top

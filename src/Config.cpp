@@ -15,4 +15,6 @@ namespace Config {
     int renderDistanceY = 2; // Up/down chunk loading limit to handle height
     bool frustumCulling = true; // Future toggle
     float fogDensity = 0.015f; // Exponential fog density
+    
+    GameMode currentMode = GameMode::CREATIVE;
 }

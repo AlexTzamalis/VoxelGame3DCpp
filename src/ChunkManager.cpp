@@ -95,8 +95,8 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             
             for (int y = -Config::renderDistanceY; y <= Config::renderDistanceY; ++y) {
                 // Hard floor/ceiling limits so we don't load memory infinitely up or deeply down below generation layer
-                if (cameraChunkPos.y + y < 0) continue; 
-                if (cameraChunkPos.y + y > 4) continue; // Allows peaks up to block 80
+                if (cameraChunkPos.y + y < -7) continue; 
+                if (cameraChunkPos.y + y > 8) continue; // Allows peaks up to block 128
                 
                 glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
                 activeChunks[chunkPos] = true;

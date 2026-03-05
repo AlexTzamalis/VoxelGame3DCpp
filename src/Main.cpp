@@ -73,24 +73,54 @@ namespace {
 
         float speed = Config::playerSpeed;
         if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) speed = Config::playerSprintSpeed;
+        // 3x Boost mode for Creative/Spectator
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && Config::currentMode != GameMode::SURVIVAL) speed *= 3.0f;
+
+        // Front direction varies by gamemode: Survival aligns to horizon floor (XZ), flying looks natively precisely anywhere
+        glm::vec3 moveFront = (Config::currentMode == GameMode::SURVIVAL) 
+            ? glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z))
+            : camera.front();
 
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            camera.addVelocity(glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z)) * speed);
+            camera.addVelocity(moveFront * speed);
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            camera.addVelocity(glm::normalize(glm::vec3(-camera.front().x, 0, -camera.front().z)) * speed);
+            camera.addVelocity(-moveFront * speed);
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
             camera.addVelocity(-camera.right() * speed);
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
             camera.addVelocity(camera.right() * speed);
             
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            camera.jump(8.5f); // Fast Parabolic Jump
+        if (Config::currentMode != GameMode::SURVIVAL) {
+            // Free flight up/down
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) camera.addVelocity(glm::vec3(0.0f, speed, 0.0f));
+            if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) camera.addVelocity(glm::vec3(0.0f, -speed, 0.0f));
+        } else {
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) camera.jump(8.5f); // Fast Parabolic Jump
         }
         
         // Debug flight mode key if user gets stuck
         if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
             camera.addVelocity(glm::vec3(0.0f, speed, 0.0f));
         }
+        
+        // GameMode Hotkey Handlers
+        static bool f1Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS) {
+            if (!f1Pressed) { 
+                Config::currentMode = (Config::currentMode == GameMode::SPECTATOR) ? GameMode::CREATIVE : GameMode::SPECTATOR; 
+                f1Pressed = true; 
+            }
+        } else { f1Pressed = false; }
+        
+        static bool f2Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS) {
+            if (!f2Pressed) { Config::currentMode = GameMode::CREATIVE; f2Pressed = true; }
+        } else { f2Pressed = false; }
+        
+        static bool f3Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS) {
+            if (!f3Pressed) { Config::currentMode = GameMode::SURVIVAL; f3Pressed = true; }
+        } else { f3Pressed = false; }
     }
 
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {

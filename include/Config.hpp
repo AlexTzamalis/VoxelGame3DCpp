@@ -1,5 +1,11 @@
 #pragma once
 
+enum class GameMode {
+    SURVIVAL,
+    CREATIVE,
+    SPECTATOR
+};
+
 namespace Config {
     // Window & Display Settings
     extern int windowWidth;
@@ -17,4 +23,7 @@ namespace Config {
     extern int renderDistanceY;
     extern bool frustumCulling;
     extern float fogDensity;
+    
+    // Game State
+    extern GameMode currentMode;
 }
