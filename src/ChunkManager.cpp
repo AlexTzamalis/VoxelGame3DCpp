@@ -1,4 +1,5 @@
 #include "ChunkManager.hpp"
+#include "WorldManager.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -38,7 +39,8 @@ void ChunkManager::workerThreadFunc() {
         // 1. Base terrain height (Continents / Hills)
         FastNoiseLite localHeightNoise;
         localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localHeightNoise.SetSeed(1337); 
+        // Bind dynamic world seed!
+        localHeightNoise.SetSeed(Config::currentSeed); 
         localHeightNoise.SetFrequency(0.005f);       
         localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
         localHeightNoise.SetFractalOctaves(5);      
@@ -46,14 +48,22 @@ void ChunkManager::workerThreadFunc() {
         // 2. Caverns - Natural FBm carving
         FastNoiseLite localCaveNoise;
         localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localCaveNoise.SetSeed(9999); 
+        localCaveNoise.SetSeed(Config::currentSeed + 9999); 
         localCaveNoise.SetFrequency(0.03f); 
         localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
         localCaveNoise.SetFractalOctaves(3); 
 
         // Heavy Lifting off the main thread
         auto chunk = std::make_unique<Chunk>(taskPos);
-        chunk->generateTerrain(localHeightNoise, localCaveNoise); 
+        
+        std::vector<uint8_t> savedData(Chunk::PADDED_SIZE * Chunk::PADDED_SIZE * Chunk::PADDED_SIZE);
+        if (WorldManager::loadChunk(taskPos, savedData)) {
+            chunk->setVoxels(savedData);
+            chunk->isModified_ = true; // Still flag true so it persists safely
+        } else {
+            chunk->generateTerrain(localHeightNoise, localCaveNoise); 
+        }
+        
         chunk->generateMesh();
 
         // Push finished chunk back safely
@@ -119,6 +129,9 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // Unload chunks outside radius
     for (auto it = chunks_.begin(); it != chunks_.end(); ) {
         if (activeChunks.find(it->first) == activeChunks.end()) {
+            if (it->second->isModified_) {
+                WorldManager::saveChunk(it->first, it->second->getVoxels());
+            }
             it = chunks_.erase(it);
         } else {
             ++it;
@@ -185,9 +198,38 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         int ly = y - cy * Chunk::CHUNK_SIZE;
         int lz = z - cz * Chunk::CHUNK_SIZE;
         it->second->setVoxel(lx, ly, lz, type);
+        it->second->isModified_ = true;
         
         // Rebuild the mesh instantly on main thread for instantaneous player feedback
         it->second->generateMesh();
         it->second->updateBuffers();
     }
+}
+
+void ChunkManager::clear() {
+    std::lock_guard<std::mutex> lock1(queueMutex_);
+    std::lock_guard<std::mutex> lock2(readyMutex_);
+    std::queue<glm::ivec3> emptyQueue;
+    std::swap(pendingTasks_, emptyQueue);
+    readyChunks_.clear();
+    
+    // Save any outstanding dirty chunks to disk as the world closes completely
+    for(const auto& [pos, chunk] : chunks_) {
+        if (chunk->isModified_) {
+            WorldManager::saveChunk(pos, chunk->getVoxels());
+        }
+    }
+    
+    chunks_.clear();
+    generatingChunks_.clear();
+}
+
+bool ChunkManager::isChunkColumnLoaded(int cx, int cz) const {
+    // Check if at least the surface chunk (Y=0 to Y=4) is loaded
+    for (int y = 0; y <= 4; ++y) {
+        if (chunks_.find(glm::ivec3(cx, y, cz)) != chunks_.end()) {
+            return true;
+        }
+    }
+    return false;
 }

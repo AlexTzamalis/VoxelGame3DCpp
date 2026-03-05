@@ -8,6 +8,7 @@ enum class GameMode {
 
 enum class GameState {
     MAIN_MENU,
+    WORLD_SELECT,
     CREATE_WORLD,
     SETTINGS,
     PLAYING,
@@ -30,9 +31,16 @@ namespace Config {
     extern int renderDistance;
     extern int renderDistanceY;
     extern bool frustumCulling;
+
+    // Load & Save to disk
+    void load();
+    void save();
+    
     extern float fogDensity;
     
     // Game State
     extern GameMode currentMode;
     extern GameState currentState;
+    extern int currentWorldType; // 0=Default, 1=Flat, 2=Skyblock
+    extern int currentSeed;
 }

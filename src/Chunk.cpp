@@ -1,5 +1,7 @@
 #include "Chunk.hpp"
+#include "Config.hpp"
 #include <GL/glew.h>
+#include <cmath>
 
 const int DIRS[6][3] = {
     { 1,  0,  0}, // +X
@@ -86,6 +88,41 @@ void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
 }
 
 void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise) {
+    if (Config::currentWorldType == 1) { // Flat World (1 Stone, 2 Dirt, 1 Grass)
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
+                int globalY = position_.y * CHUNK_SIZE + y;
+                for (int z = -1; z <= CHUNK_SIZE; ++z) {
+                    if (globalY == -3) setVoxel(x, y, z, 4); // Stone
+                    else if (globalY == -2 || globalY == -1) setVoxel(x, y, z, 3); // Dirt
+                    else if (globalY == 0) setVoxel(x, y, z, 2); // Grass
+                    else setVoxel(x, y, z, 1); // Air
+                }
+            }
+        }
+        return;
+    }
+    
+    if (Config::currentWorldType == 2) { // Skyblock (Central Island)
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {
+            int globalX = position_.x * CHUNK_SIZE + x;
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
+                int globalY = position_.y * CHUNK_SIZE + y;
+                for (int z = -1; z <= CHUNK_SIZE; ++z) {
+                    int globalZ = position_.z * CHUNK_SIZE + z;
+                    if (globalX >= -3 && globalX <= 3 && globalZ >= -3 && globalZ <= 3) {
+                        if (globalY == 0) setVoxel(x, y, z, 2); // Grass
+                        else if (globalY >= -2 && globalY < 0) setVoxel(x, y, z, 3); // Dirt
+                        else setVoxel(x, y, z, 1); // Air
+                    } else {
+                        setVoxel(x, y, z, 1); // Air
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     for (int x = -1; x <= CHUNK_SIZE; ++x) {
         for (int z = -1; z <= CHUNK_SIZE; ++z) {
             float globalX = position_.x * CHUNK_SIZE + x;
@@ -126,7 +163,7 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                             setVoxel(x, y, z, 3); // Dirt
                         } else {
                             // Pseudo-random Ore (Type 8) vs Stone (Type 4)
-                            if (globalY < 25 && ((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17) % 100 < 3) {
+                            if (globalY < 25 && ((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17 + Config::currentSeed) % 100 < 3) {
                                 setVoxel(x, y, z, 8); // Coal Ore
                             } else {
                                 setVoxel(x, y, z, 4); // Deep Stone
@@ -142,8 +179,8 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                     
                     // Forest System (Sparse, highly randomized Deterministic Trees)
                     // Better avalanche hash function to completely prevent linear "Tree Snakes"
-                    uint32_t mixX = (uint32_t)std::abs((int)globalX);
-                    uint32_t mixZ = (uint32_t)std::abs((int)globalZ);
+                    uint32_t mixX = (uint32_t)std::abs((int)globalX + Config::currentSeed * 7);
+                    uint32_t mixZ = (uint32_t)std::abs((int)globalZ + Config::currentSeed * 13);
                     uint32_t hashValue = (mixX * 374761393U ^ mixZ * 668265263U);
                     hashValue = (hashValue ^ (hashValue >> 13)) * 1274126177U;
                     
@@ -160,8 +197,8 @@ void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise
                         for(int dz = -2; dz <= 2 && !isLeaf; ++dz) {
                             int tx = globalX + dx;
                             int tz = globalZ + dz;
-                            uint32_t tMixX = (uint32_t)std::abs(tx);
-                            uint32_t tMixZ = (uint32_t)std::abs(tz);
+                            uint32_t tMixX = (uint32_t)std::abs(tx + Config::currentSeed * 7);
+                            uint32_t tMixZ = (uint32_t)std::abs(tz + Config::currentSeed * 13);
                             uint32_t tHash = (tMixX * 374761393U ^ tMixZ * 668265263U);
                             tHash = (tHash ^ (tHash >> 13)) * 1274126177U;
                             
