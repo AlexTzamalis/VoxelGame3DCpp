@@ -11,7 +11,11 @@ namespace Config {
     float mouseSensitivity = 0.1f;
     float cameraFov = 75.0f; // Note: You'll want to update Camera.hpp to use this eventually
 
-    int renderDistance = 8; // Radiates out in a grid. E.g. Distance 4 = 9x9 grid = 81 Chunks.
+    int renderDistance = 12; // Adjusted down for better framerates on lower-end Systems
+    int renderDistanceY = 5; // Up/down chunk loading limit (Handles roughly Y: -30 to 130)
     bool frustumCulling = true; // Future toggle
-    float fogDensity = 0.015f; // Exponential fog density
+    float fogDensity = 0.005f; // Exponential fog density
+    
+    GameMode currentMode = GameMode::CREATIVE;
+    GameState currentState = GameState::MAIN_MENU;
 }

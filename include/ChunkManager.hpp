@@ -43,8 +43,6 @@ private:
 
     // Keeps track of chunks currently being generated so we don't start duplicate jobs
     std::unordered_map<glm::ivec3, bool, IVec3Hash> generatingChunks_;
-
-    FastNoiseLite noise_;
     
     // Multi-Threading Data Structures
     std::vector<std::thread> workers_;

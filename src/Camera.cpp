@@ -1,4 +1,6 @@
 #include "Camera.hpp"
+#include "Config.hpp"
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
 Camera::Camera(glm::vec3 position, float yaw, float pitch)
@@ -22,8 +24,13 @@ void Camera::jump(float velocity) {
 }
 
 void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3, glm::vec3)>& checkCollisionFunc) {
-    // 1. Apply Gravity to Physics Velocity
-    physicsVelocity_.y -= 28.0f * deltaTime; // Gravity acceleration
+    if (Config::currentMode == GameMode::SURVIVAL) {
+        physicsVelocity_.y -= 28.0f * deltaTime; // Gravity acceleration
+    } else {
+        // Creative & Spectator flight drag
+        physicsVelocity_.y *= std::pow(0.01f, deltaTime);
+        if (std::abs(physicsVelocity_.y) < 0.01f) physicsVelocity_.y = 0.0f;
+    }
 
     // 2. Combine intentional player input with gravity
     glm::vec3 targetVelocity = inputVelocity_ + physicsVelocity_;
@@ -35,6 +42,7 @@ void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3, g
 
     // 3. Collision testing per axis (to allow sliding across walls)
     auto collides = [&](glm::vec3 pos) -> bool {
+        if (Config::currentMode == GameMode::SPECTATOR) return false; // Noclip activated!
         glm::vec3 minB = pos - boundingBoxHalfExtents_;
         glm::vec3 maxB = pos + boundingBoxHalfExtents_;
         return checkCollisionFunc(minB, maxB);

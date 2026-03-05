@@ -17,19 +17,19 @@ public:
     void setVoxel(int x, int y, int z, uint8_t type);
 
     // Initialization and updates
-    void generateTerrain(FastNoiseLite& noise);
+    void generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise);
     void generateMesh();
     void updateBuffers();
     
     // Rendering
     void render() const;
-    void renderWater() const;
+    void renderTransparent() const;
 
     glm::ivec3 getPosition() const { return position_; }
 
 private:
     int getIndex(int x, int y, int z) const;
-    bool isFaceVisible(int x, int y, int z, int dx, int dy, int dz) const;
+    bool isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int dy, int dz) const;
     void addFace(int x, int y, int z, int dir, uint8_t type);
 
     glm::ivec3 position_;
@@ -38,7 +38,7 @@ private:
     // Mesh data
     std::vector<float> vertices_;
     std::vector<unsigned int> indices_;
-    std::vector<unsigned int> waterIndices_;
+    std::vector<unsigned int> transparentIndices_;
     
     // OpenGL buffers
     unsigned int vao_ = 0;
@@ -47,5 +47,5 @@ private:
     
     bool bufferNeedsUpdate_ = false;
     unsigned int indexCount_ = 0;
-    unsigned int waterIndexCount_ = 0;
+    unsigned int transparentIndexCount_ = 0;
 };

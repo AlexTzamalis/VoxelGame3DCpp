@@ -59,6 +59,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# ImGui
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
+
 # Executable
 add_executable(VoxelGame3D
     src/Main.cpp
@@ -69,6 +72,13 @@ add_executable(VoxelGame3D
     src/ChunkManager.cpp
     src/Config.cpp
     src/stb_image_impl.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
 target_include_directories(VoxelGame3D PRIVATE
@@ -76,6 +86,8 @@ target_include_directories(VoxelGame3D PRIVATE
     ${glm_SOURCE_DIR}
     ${glew_SOURCE_DIR}/include
     ${stb_SOURCE_DIR}
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 target_link_libraries(VoxelGame3D PRIVATE

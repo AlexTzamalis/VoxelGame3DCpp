@@ -5,13 +5,6 @@
 #include <GL/glew.h>
 
 ChunkManager::ChunkManager() : isRunning_(true) {
-    // Configure FastNoiseLite for smooth, natural terrain
-    noise_.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-    noise_.SetSeed(1337); 
-    noise_.SetFrequency(0.02f);       // Determines width / scale of hills
-    noise_.SetFractalType(FastNoiseLite::FractalType_FBm);
-    noise_.SetFractalOctaves(4);      // Detail levels
-
     // Launch worker threads
     int numThreads = std::thread::hardware_concurrency() - 1;
     if (numThreads <= 0) numThreads = 1;
@@ -42,9 +35,25 @@ void ChunkManager::workerThreadFunc() {
             pendingTasks_.pop();
         }
 
+        // 1. Base terrain height (Continents / Hills)
+        FastNoiseLite localHeightNoise;
+        localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+        localHeightNoise.SetSeed(1337); 
+        localHeightNoise.SetFrequency(0.005f);       
+        localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+        localHeightNoise.SetFractalOctaves(5);      
+
+        // 2. Caverns - Natural FBm carving
+        FastNoiseLite localCaveNoise;
+        localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+        localCaveNoise.SetSeed(9999); 
+        localCaveNoise.SetFrequency(0.03f); 
+        localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+        localCaveNoise.SetFractalOctaves(3); 
+
         // Heavy Lifting off the main thread
         auto chunk = std::make_unique<Chunk>(taskPos);
-        chunk->generateTerrain(noise_); 
+        chunk->generateTerrain(localHeightNoise, localCaveNoise); 
         chunk->generateMesh();
 
         // Push finished chunk back safely
@@ -73,7 +82,7 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
     // Determine which chunk the camera is currently inside
     glm::ivec3 cameraChunkPos(
         std::floor(cameraPosition.x / Chunk::CHUNK_SIZE),
-        0, // For now, we are locking generation to the Y=0 chunk layer only
+        std::floor(cameraPosition.y / Chunk::CHUNK_SIZE),
         std::floor(cameraPosition.z / Chunk::CHUNK_SIZE)
     );
 
@@ -82,17 +91,27 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
 
     for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
         for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
-            glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, 0, z);
-            activeChunks[chunkPos] = true;
+            
+            // Mathematically cull the corners of the grid to make drawing distance a beautiful circle!
+            if (x * x + z * z > Config::renderDistance * Config::renderDistance) continue;
+            
+            for (int y = -Config::renderDistanceY; y <= Config::renderDistanceY; ++y) {
+                // Hard floor/ceiling limits so we don't load memory infinitely up or deeply down below generation layer
+                if (cameraChunkPos.y + y < -7) continue; 
+                if (cameraChunkPos.y + y > 8) continue; // Allows peaks up to block 128
+                
+                glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
+                activeChunks[chunkPos] = true;
 
-            // If it's missing entirely (not loaded, and not generating currently)
-            if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
-                generatingChunks_[chunkPos] = true; // Mark as started
-                {
-                    std::lock_guard<std::mutex> lock(queueMutex_);
-                    pendingTasks_.push(chunkPos);
+                // If it's missing entirely (not loaded, and not generating currently)
+                if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
+                    generatingChunks_[chunkPos] = true; // Mark as started
+                    {
+                        std::lock_guard<std::mutex> lock(queueMutex_);
+                        pendingTasks_.push(chunkPos);
+                    }
+                    cv_.notify_one();
                 }
-                cv_.notify_one();
             }
         }
     }
@@ -124,7 +143,7 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) cons
         chunk->render();
     }
     
-    // 2. TRANSPARENT RENDER PASS (Water)
+    // 2. TRANSPARENT RENDER PASS (Water & Leaves)
     for (const auto& [pos, chunk] : chunks_) {
         glm::vec3 minBound = glm::vec3(pos) * static_cast<float>(Chunk::CHUNK_SIZE);
         glm::vec3 maxBound = minBound + glm::vec3(Chunk::CHUNK_SIZE);
@@ -134,7 +153,7 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera) cons
         model = glm::translate(model, minBound);
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         
-        chunk->renderWater();
+        chunk->renderTransparent();
     }
 }
 
