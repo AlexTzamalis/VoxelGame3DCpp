@@ -20,6 +20,7 @@ public:
 
     glm::mat4 viewMatrix() const;
     glm::vec3 position() const { return position_; }
+    void setPosition(glm::vec3 pos) { position_ = pos; physicsVelocity_ = glm::vec3(0.0f); }
     glm::vec3 front() const { return front_; }
     glm::vec3 right() const { return right_; }
     glm::vec3 up() const { return up_; }

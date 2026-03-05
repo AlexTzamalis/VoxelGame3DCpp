@@ -71,6 +71,7 @@ add_executable(VoxelGame3D
     src/Chunk.cpp
     src/ChunkManager.cpp
     src/Config.cpp
+    src/WorldManager.cpp
     src/stb_image_impl.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp

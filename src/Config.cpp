@@ -18,4 +18,6 @@ namespace Config {
     
     GameMode currentMode = GameMode::CREATIVE;
     GameState currentState = GameState::MAIN_MENU;
+    int currentWorldType = 0;
+    int currentSeed = 1337;
 }

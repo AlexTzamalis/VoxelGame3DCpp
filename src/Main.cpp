@@ -3,7 +3,9 @@
 #include "Texture.hpp"
 #include "ChunkManager.hpp"
 #include "Config.hpp"
+#include "WorldManager.hpp"
 #include <GL/glew.h>
+#include <algorithm>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -144,6 +146,8 @@ namespace {
 }
 
 int main() {
+    WorldManager::init();
+
     if (!glfwInit()) {
         std::cerr << "Failed to init GLFW\n";
         return -1;
@@ -268,27 +272,33 @@ int main() {
             atlas.bind(0);
             
             if (Config::currentState == GameState::PLAYING) {
-                // Calculate physics/AABB movement
-                auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
-                    // Epsilon shrink to cleanly slide across block faces without getting snagged at float borders
-                    int startX = std::floor(minB.x + 0.01f);
-                    int endX   = std::floor(maxB.x - 0.01f);
-                    int startY = std::floor(minB.y + 0.01f);
-                    int endY   = std::floor(maxB.y - 0.01f);
-                    int startZ = std::floor(minB.z + 0.01f);
-                    int endZ   = std::floor(maxB.z - 0.01f);
-                    
-                    for (int x = startX; x <= endX; x++) {
-                        for (int y = startY; y <= endY; y++) {
-                            for (int z = startZ; z <= endZ; z++) {
-                                uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
-                                if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                // Determine if chunk we are inside is fully generated
+                int cx = std::floor(camera.position().x / Chunk::CHUNK_SIZE);
+                int cz = std::floor(camera.position().z / Chunk::CHUNK_SIZE);
+                
+                bool isLoaded = chunkManager.isChunkColumnLoaded(cx, cz);
+                if (isLoaded) {
+                    // Safe to apply gravity and collision sweeps without sinking into void
+                    auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
+                        int startX = std::floor(minB.x + 0.01f);
+                        int endX   = std::floor(maxB.x - 0.01f);
+                        int startY = std::floor(minB.y + 0.01f);
+                        int endY   = std::floor(maxB.y - 0.01f);
+                        int startZ = std::floor(minB.z + 0.01f);
+                        int endZ   = std::floor(maxB.z - 0.01f);
+                        
+                        for (int x = startX; x <= endX; x++) {
+                            for (int y = startY; y <= endY; y++) {
+                                for (int z = startZ; z <= endZ; z++) {
+                                    uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
+                                    if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                                }
                             }
                         }
-                    }
-                    return false;
-                };
-                camera.applyPhysics(deltaTime, checkCollisionCall);
+                        return false;
+                    };
+                    camera.applyPhysics(deltaTime, checkCollisionCall);
+                }
 
                 // Update the Frustum boundary definitions based on currently moving camera coordinates
                 camera.updateFrustum();
@@ -307,13 +317,8 @@ int main() {
             ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(300, 240), ImGuiCond_Always);
             ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-            if (ImGui::Button("Play World", ImVec2(280, 40))) {
-                Config::currentState = GameState::PLAYING;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                firstMouse = true;
-            }
-            if (ImGui::Button("Create World", ImVec2(280, 40))) {
-                Config::currentState = GameState::CREATE_WORLD;
+            if (ImGui::Button("Singleplayer", ImVec2(280, 40))) {
+                Config::currentState = GameState::WORLD_SELECT;
             }
             if (ImGui::Button("Settings", ImVec2(280, 40))) {
                 Config::currentState = GameState::SETTINGS;
@@ -324,9 +329,49 @@ int main() {
             }
             ImGui::End();
         } 
+        else if (Config::currentState == GameState::WORLD_SELECT) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Always);
+            ImGui::Begin("Select World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            auto worlds = WorldManager::getSavedWorlds();
+            
+            ImGui::BeginChild("WorldList", ImVec2(0, 280), true);
+            if (worlds.empty()) {
+                ImGui::TextDisabled("No worlds found. Create a new one!");
+            } else {
+                for (const auto& w : worlds) {
+                    if (ImGui::TreeNodeEx(w.displayName.c_str(), ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
+                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Mode: %d | Type: %d | Time Played: %llds", (int)w.mode, w.worldType, w.timePlayedSeconds);
+                        ImGui::SameLine(ImGui::GetWindowWidth() - 100);
+                        
+                        std::string playLabel = "Play##" + w.folderName;
+                        if (ImGui::Button(playLabel.c_str(), ImVec2(80, 25))) {
+                            chunkManager.clear();
+                            WorldManager::loadWorld(w.folderName);
+                            // Initial Spawn High Height so we can safely fall onto the completely loaded world!
+                            camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); 
+                            Config::currentState = GameState::PLAYING;
+                            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                            firstMouse = true;
+                        }
+                    }
+                }
+            }
+            ImGui::EndChild();
+            
+            if (ImGui::Button("Create New World", ImVec2(230, 40))) {
+                Config::currentState = GameState::CREATE_WORLD;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Back to Menu", ImVec2(230, 40))) {
+                Config::currentState = GameState::MAIN_MENU;
+            }
+            ImGui::End();
+        }
         else if (Config::currentState == GameState::CREATE_WORLD) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 180), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400, 340), ImGuiCond_Always);
             ImGui::Begin("Create New World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
             static char worldName[64] = "My Beautiful World";
@@ -338,19 +383,45 @@ int main() {
             static int selectedMode = 1; // 0: Survival, 1: Creative, 2: Spectator
             ImGui::Combo("Game Mode", &selectedMode, "Survival\0Creative\0Spectator\0");
             
+            static int selectedTerrain = 0; // 0: Default, 1: Flat, 2: Skyblock
+            ImGui::Combo("Terrain Type", &selectedTerrain, "Default\0Flat World\0Skyblock\0");
+            
             ImGui::Separator();
             
             if (ImGui::Button("Create & Play!", ImVec2(380, 40))) {
                 auto newMode = (selectedMode == 0) ? GameMode::SURVIVAL : ((selectedMode == 1) ? GameMode::CREATIVE : GameMode::SPECTATOR);
-                Config::currentMode = newMode;
-                // Note: Changing ChunkManager chunk seeding is planned for next iteration!
+                
+                WorldMetadata newMeta;
+                newMeta.displayName = std::string(worldName);
+                if (newMeta.displayName.empty()) newMeta.displayName = "Unnamed_World";
+                
+                // Keep file names path safe
+                newMeta.folderName = newMeta.displayName; 
+                std::replace(newMeta.folderName.begin(), newMeta.folderName.end(), ' ', '_'); 
+                newMeta.folderName += "_" + std::to_string(std::abs(seed));
+                
+                newMeta.seed = seed;
+                newMeta.mode = newMode;
+                newMeta.worldType = selectedTerrain;
+                newMeta.creationDate = getCurrentTimeMs();
+                newMeta.lastPlayed = getCurrentTimeMs();
+                newMeta.timePlayedSeconds = 0;
+                
+                WorldManager::createWorld(newMeta);
+                
+                // Clear any chunks from previously playing!
+                chunkManager.clear();
+                WorldManager::loadWorld(newMeta.folderName);
+                
+                // Initial spawn location (Falling safely)
+                camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f));
                 
                 Config::currentState = GameState::PLAYING;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 firstMouse = true;
             }
             if (ImGui::Button("Cancel", ImVec2(380, 40))) {
-                Config::currentState = GameState::MAIN_MENU;
+                Config::currentState = GameState::WORLD_SELECT;
             }
             ImGui::End();
         }
@@ -388,6 +459,7 @@ int main() {
                 firstMouse = true;
             }
             if (ImGui::Button("Save and Quit to Menu", ImVec2(280, 40))) {
+                WorldManager::updatePlayTime();
                 Config::currentState = GameState::MAIN_MENU;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }

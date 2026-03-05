@@ -38,7 +38,8 @@ void ChunkManager::workerThreadFunc() {
         // 1. Base terrain height (Continents / Hills)
         FastNoiseLite localHeightNoise;
         localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localHeightNoise.SetSeed(1337); 
+        // Bind dynamic world seed!
+        localHeightNoise.SetSeed(Config::currentSeed); 
         localHeightNoise.SetFrequency(0.005f);       
         localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
         localHeightNoise.SetFractalOctaves(5);      
@@ -46,7 +47,7 @@ void ChunkManager::workerThreadFunc() {
         // 2. Caverns - Natural FBm carving
         FastNoiseLite localCaveNoise;
         localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localCaveNoise.SetSeed(9999); 
+        localCaveNoise.SetSeed(Config::currentSeed + 9999); 
         localCaveNoise.SetFrequency(0.03f); 
         localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
         localCaveNoise.SetFractalOctaves(3); 
@@ -190,4 +191,24 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         it->second->generateMesh();
         it->second->updateBuffers();
     }
+}
+
+void ChunkManager::clear() {
+    std::lock_guard<std::mutex> lock1(queueMutex_);
+    std::lock_guard<std::mutex> lock2(readyMutex_);
+    std::queue<glm::ivec3> emptyQueue;
+    std::swap(pendingTasks_, emptyQueue);
+    readyChunks_.clear();
+    chunks_.clear();
+    generatingChunks_.clear();
+}
+
+bool ChunkManager::isChunkColumnLoaded(int cx, int cz) const {
+    // Check if at least the surface chunk (Y=0 to Y=4) is loaded
+    for (int y = 0; y <= 4; ++y) {
+        if (chunks_.find(glm::ivec3(cx, y, cz)) != chunks_.end()) {
+            return true;
+        }
+    }
+    return false;
 }

@@ -8,6 +8,7 @@ enum class GameMode {
 
 enum class GameState {
     MAIN_MENU,
+    WORLD_SELECT,
     CREATE_WORLD,
     SETTINGS,
     PLAYING,
@@ -35,4 +36,6 @@ namespace Config {
     // Game State
     extern GameMode currentMode;
     extern GameState currentState;
+    extern int currentWorldType; // 0=Default, 1=Flat, 2=Skyblock
+    extern int currentSeed;
 }
