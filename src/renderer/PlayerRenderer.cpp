@@ -52,17 +52,17 @@ void PlayerRenderer::addCube(glm::vec3 center, glm::vec3 size, int u, int v, int
     };
 
     // Front (-Z)
-    makeFace(p4, p5, p6, p7, glm::vec3(0, 0, -1), u + d, v + d, w, h);
+    makeFace(p5, p4, p7, p6, glm::vec3(0, 0, -1), u + d, v + d, w, h);
     // Back (+Z)
-    makeFace(p1, p0, p3, p2, glm::vec3(0, 0, 1), u + d + w + d, v + d, w, h);
+    makeFace(p0, p1, p2, p3, glm::vec3(0, 0, 1), u + d + w + d, v + d, w, h);
     // Right (+X)
-    makeFace(p5, p1, p2, p6, glm::vec3(1, 0, 0), u, v + d, d, h);
+    makeFace(p1, p5, p6, p2, glm::vec3(1, 0, 0), u, v + d, d, h);
     // Left (-X)
-    makeFace(p0, p4, p7, p3, glm::vec3(-1, 0, 0), u + d + w, v + d, d, h);
+    makeFace(p4, p0, p3, p7, glm::vec3(-1, 0, 0), u + d + w, v + d, d, h);
     // Top (+Y)
-    makeFace(p7, p6, p2, p3, glm::vec3(0, 1, 0), u + d, v, w, d);
+    makeFace(p6, p7, p3, p2, glm::vec3(0, 1, 0), u + d, v, w, d);
     // Bottom (-Y)
-    makeFace(p0, p1, p5, p4, glm::vec3(0, -1, 0), u + d + w, v, w, d);
+    makeFace(p1, p0, p4, p5, glm::vec3(0, -1, 0), u + d + w, v, w, d);
 }
 
 void PlayerRenderer::buildMesh() {
@@ -81,16 +81,16 @@ void PlayerRenderer::buildMesh() {
     addCube(glm::vec3(0.0f, 6.0f * px, 0.0f), glm::vec3(8.0f * px, 12.0f * px, 4.0f * px), 16, 16, 8, 12, 4); // 36-71
 
     // Right Arm (4x12x4) (+X)
-    addCube(glm::vec3(6.0f * px, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 40, 16, 4, 12, 4); // 72-107
+    addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 40, 16, 4, 12, 4); // 72-107
 
     // Left Arm (4x12x4) (-X)
-    addCube(glm::vec3(-6.0f * px, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 32, 48, 4, 12, 4); // 108-143
+    addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 32, 48, 4, 12, 4); // 108-143
 
     // Right Leg (4x12x4) (+X)
-    addCube(glm::vec3(2.0f * px, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 0, 16, 4, 12, 4); // 144-179
+    addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 0, 16, 4, 12, 4); // 144-179
 
     // Left Leg (4x12x4) (-X)
-    addCube(glm::vec3(-2.0f * px, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 16, 48, 4, 12, 4); // 180-215
+    addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 16, 48, 4, 12, 4); // 180-215
 
     vertexCount_ = vertices_.size();
 
@@ -137,19 +137,43 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
     glBindTexture(GL_TEXTURE_2D, textureID_);
 
     float speed = glm::length(glm::vec2(velocity.x, velocity.z));
-    float targetSwing = (speed > 0.1f) ? (speed * 0.1f) : 0.0f;
-    static float currentSwing = 0.0f;
-    currentSwing += (targetSwing - currentSwing) * 0.1f; // Smooth transition
+    
+    static float lastTime = time;
+    float dt = time - lastTime;
+    if (dt < 0.0f) dt = 0.0f;
+    lastTime = time;
+    
+    static float animationPhase = 0.0f;
+    float swingFreq = std::min(speed * 1.5f, 15.0f); 
+    if (speed > 0.1f) {
+        animationPhase += swingFreq * dt;
+    }
 
-    float walkTime = speed > 0.1f ? time * 15.0f : 0.0f;
-    float armSwing = sin(walkTime) * currentSwing * 4.0f;
-    float legSwing = sin(walkTime) * currentSwing * 4.0f;
+    float currentSwing = std::min(speed * 0.15f, 1.2f); 
+    if (speed < 0.1f) currentSwing = 0.0f;
+    
+    static float smoothSwing = 0.0f;
+    smoothSwing += (currentSwing - smoothSwing) * 15.0f * dt;
+
+    float armSwing = sin(animationPhase) * smoothSwing;
+    float legSwing = sin(animationPhase) * smoothSwing;
 
     // Body origin (at feet)
     glm::vec3 playerPos = camera.position();
     playerPos.y -= 1.62f; // Offset from eye to feet
 
-    float yaw = glm::radians(-camera.yaw() - 90.0f); // Minecraft standard
+    bool isFirstPerson = camera.getViewMode() == CameraViewMode::FIRST_PERSON;
+    float px = 0.05625f;
+
+    if (isFirstPerson) {
+        // Push the rendered body slightly backwards in 1st person
+        // so looking down reveals the chest!
+        float pushOft = 3.0f * px;
+        playerPos.x -= cos(glm::radians(camera.yaw())) * pushOft;
+        playerPos.z -= sin(glm::radians(camera.yaw())) * pushOft;
+    }
+
+    float facingYaw = glm::radians(-camera.yaw() - 90.0f); // Minecraft standard
     
     // We pass the model to the shader via standard glUniformMatrix4fv
     int modelLoc = glGetUniformLocation(shaderId, "model");
@@ -157,16 +181,13 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
     auto drawPart = [&](int offset, glm::vec3 localPos, glm::vec3 rotAxis, float rotAngle) {
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, playerPos);
-        model = glm::rotate(model, yaw, glm::vec3(0, 1, 0));
+        model = glm::rotate(model, facingYaw, glm::vec3(0, 1, 0));
         model = glm::translate(model, localPos);
         if (rotAngle != 0.0f) model = glm::rotate(model, rotAngle, rotAxis);
         
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &model[0][0]);
         glDrawArrays(GL_TRIANGLES, offset * 36, 36);
     };
-
-    float px = 0.05625f;
-    bool isFirstPerson = camera.getViewMode() == CameraViewMode::FIRST_PERSON;
 
     if (!isFirstPerson) {
         // 0: Head (pivot neck, rot pitch)
