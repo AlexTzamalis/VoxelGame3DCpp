@@ -5,8 +5,6 @@
 #include <iostream>
 #include <GL/glew.h>
 
-ChunkColumn::ChunkColumn(glm::ivec2 pos) : position(pos) {}
-
 ChunkManager::ChunkManager() : isRunning_(true) {
     glGenVertexArrays(1, &mdiVAO_);
     glGenBuffers(1, &mdiVBO_);
@@ -104,15 +102,39 @@ void ChunkManager::defragmentVRAM() {
     currentIndexOffset_ = 0;
 
     glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
-    // Orphan buffers to prevent pipeline stalling
     glBufferData(GL_ARRAY_BUFFER, 40000000 * sizeof(VoxelVertex), nullptr, GL_DYNAMIC_DRAW);
     
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, 60000000 * sizeof(unsigned int), nullptr, GL_DYNAMIC_DRAW);
 
     for (auto& [pos, col] : columns_) {
+        // If CPU data was freed, rebuild it from chunks
+        if (col->vertices.empty() && col->opaqueCount > 0) {
+            std::vector<VoxelVertex> allVerts;
+            std::vector<unsigned int> allInds;
+            std::vector<unsigned int> allTrans;
+            for (int y = -32; y <= 16; ++y) {
+                glm::ivec3 cpos(pos.x, y, pos.y);
+                auto cit = chunks_.find(cpos);
+                if (cit != chunks_.end()) {
+                    unsigned int baseVert = allVerts.size();
+                    const auto& cv = cit->second->getVertices();
+                    const auto& ci = cit->second->getIndices();
+                    const auto& ct = cit->second->getTransparentIndices();
+                    allVerts.insert(allVerts.end(), cv.begin(), cv.end());
+                    for (unsigned int idx : ci) allInds.push_back(idx + baseVert);
+                    for (unsigned int idx : ct) allTrans.push_back(idx + baseVert);
+                }
+            }
+            col->opaqueCount = allInds.size();
+            col->transparentCount = allTrans.size();
+            col->vertices = std::move(allVerts);
+            col->indices = std::move(allInds);
+            col->transparentIndices = std::move(allTrans);
+        }
+        
         if (col->vertices.empty()) {
-            col->inVRAM = true; // No visual data
+            col->inVRAM = true;
             continue;
         }
         
@@ -131,28 +153,42 @@ void ChunkManager::defragmentVRAM() {
         currentVertexOffset_ += col->vertices.size();
         currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
         col->inVRAM = true;
+        
+        // Free CPU data after defrag upload too
+        col->vertices.clear();
+        col->vertices.shrink_to_fit();
+        col->indices.clear();
+        col->indices.shrink_to_fit();
+        col->transparentIndices.clear();
+        col->transparentIndices.shrink_to_fit();
     }
 }
 
 void ChunkManager::update(const glm::vec3& cameraPosition) {
-    // Consistently poll workers and upload to OpenGL strictly on MAIN thread
-    std::vector<std::unique_ptr<Chunk>> finishedChunks;
+    // Throttle: process max 8 finished chunks per frame to prevent main-thread stalls
+    const int MAX_CHUNKS_PER_FRAME = 8;
+    const int MAX_COLUMN_REBUILDS_PER_FRAME = 4;
+    const int MAX_VRAM_UPLOADS_PER_FRAME = 6;
+    
     {
         std::lock_guard<std::mutex> lock(readyMutex_);
-        finishedChunks.swap(readyChunks_);
-    }
-
-    for (auto& chunk : finishedChunks) {
-        glm::ivec3 pos = chunk->getPosition();
-        glm::ivec2 colPos(pos.x, pos.z);
-        
-        if (columns_.find(colPos) == columns_.end()) {
-            columns_[colPos] = std::make_unique<ChunkColumn>(colPos);
+        int count = 0;
+        while (!readyChunks_.empty() && count < MAX_CHUNKS_PER_FRAME) {
+            auto chunk = std::move(readyChunks_.back());
+            readyChunks_.pop_back();
+            
+            glm::ivec3 pos = chunk->getPosition();
+            glm::ivec2 colPos(pos.x, pos.z);
+            
+            if (columns_.find(colPos) == columns_.end()) {
+                columns_[colPos] = std::make_unique<ChunkColumn>(colPos);
+            }
+            columns_[colPos]->needsUpdate = true;
+            
+            chunks_[pos] = std::move(chunk);
+            generatingChunks_.erase(pos);
+            count++;
         }
-        columns_[colPos]->needsUpdate = true;
-        
-        chunks_[pos] = std::move(chunk);
-        generatingChunks_.erase(pos);
     }
 
     // Determine which chunk the camera is currently inside
@@ -218,9 +254,10 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         }
     }
 
-    // Clean up empty columns and update modified columns
+    // Throttled column rebuilds
+    int columnRebuilds = 0;
     for (auto it = columns_.begin(); it != columns_.end(); ) {
-        if (it->second->needsUpdate) {
+        if (it->second->needsUpdate && columnRebuilds < MAX_COLUMN_REBUILDS_PER_FRAME) {
             std::vector<VoxelVertex> allVerts;
             std::vector<unsigned int> allInds;
             std::vector<unsigned int> allTrans;
@@ -243,38 +280,44 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             }
             
             if (!hasAnyChunk) {
-                // Column is permanently dead, cull it.
                 it = columns_.erase(it);
+                mdiCommandsDirty_ = true;
                 continue;
             } else {
+                it->second->opaqueCount = allInds.size();
+                it->second->transparentCount = allTrans.size();
                 it->second->vertices = std::move(allVerts);
                 it->second->indices = std::move(allInds);
                 it->second->transparentIndices = std::move(allTrans);
                 it->second->needsUpdate = false;
-                it->second->inVRAM = false; // Flag to push this dynamically
+                it->second->inVRAM = false;
+                columnRebuilds++;
             }
         }
         ++it;
     }
 
-    bool triggeredDefrag = false;
+    // Throttled VRAM uploads
+    bool needsDefrag = false;
     for (auto& [pos, col] : columns_) {
-        if (!col->inVRAM) {
+        if (!col->inVRAM && !col->vertices.empty()) {
             if (currentVertexOffset_ + col->vertices.size() >= 40000000 || 
                 currentIndexOffset_ + col->indices.size() + col->transparentIndices.size() >= 60000000) {
-                triggeredDefrag = true;
+                needsDefrag = true;
                 break;
             }
         }
     }
 
-    if (triggeredDefrag) {
+    if (needsDefrag) {
         defragmentVRAM();
+        mdiCommandsDirty_ = true;
     } else {
+        int vramUploads = 0;
         glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
         for (auto& [pos, col] : columns_) {
-            if (!col->inVRAM && !col->vertices.empty()) {
+            if (!col->inVRAM && !col->vertices.empty() && vramUploads < MAX_VRAM_UPLOADS_PER_FRAME) {
                 col->vertexOffset = currentVertexOffset_;
                 col->indexOffset = currentIndexOffset_;
                 
@@ -290,6 +333,16 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                 currentVertexOffset_ += col->vertices.size();
                 currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
                 col->inVRAM = true;
+                mdiCommandsDirty_ = true;
+                vramUploads++;
+                
+                // Free CPU-side mesh data immediately after VRAM upload!
+                col->vertices.clear();
+                col->vertices.shrink_to_fit();
+                col->indices.clear();
+                col->indices.shrink_to_fit();
+                col->transparentIndices.clear();
+                col->transparentIndices.shrink_to_fit();
             }
         }
     }
@@ -306,58 +359,51 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
     glm::mat4 globalModel = glm::mat4(1.0f);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(globalModel));
 
-    std::vector<DrawElementsIndirectCommand> opaqueCmds;
-    std::vector<DrawElementsIndirectCommand> transCmds;
-    opaqueCmds.reserve(columns_.size());
-    transCmds.reserve(columns_.size());
+    // Rebuild cached MDI commands only when dirty
+    if (mdiCommandsDirty_) {
+        cachedOpaqueCmds_.clear();
+        cachedTransCmds_.clear();
+        cachedOpaqueCmds_.reserve(columns_.size());
+        cachedTransCmds_.reserve(columns_.size());
 
-    for (const auto& [pos, column] : columns_) {
-        if (!column->inVRAM) continue;
-        
-        glm::vec3 minBound = glm::vec3(pos.x, -32.0f, pos.y) * static_cast<float>(Chunk::CHUNK_SIZE);
-        
-        if (radialDistLimit > 0.0f) {
-            float dx = (pos.x * Chunk::CHUNK_SIZE) - camPos.x;
-            float dz = (pos.y * Chunk::CHUNK_SIZE) - camPos.z;
-            if (dx * dx + dz * dz > limitSq) continue;
+        for (const auto& [pos, column] : columns_) {
+            if (!column->inVRAM) continue;
+            
+            if (column->opaqueCount > 0) {
+                DrawElementsIndirectCommand cmd;
+                cmd.count = column->opaqueCount;
+                cmd.instanceCount = 1;
+                cmd.firstIndex = column->indexOffset;
+                cmd.baseVertex = column->vertexOffset;
+                cmd.baseInstance = 0;
+                cachedOpaqueCmds_.push_back(cmd);
+            }
+            
+            if (column->transparentCount > 0) {
+                DrawElementsIndirectCommand cmd;
+                cmd.count = column->transparentCount;
+                cmd.instanceCount = 1;
+                cmd.firstIndex = column->transparentIndexOffset;
+                cmd.baseVertex = column->vertexOffset;
+                cmd.baseInstance = 0;
+                cachedTransCmds_.push_back(cmd);
+            }
         }
-
-        glm::vec3 maxBound = glm::vec3(pos.x + 1, 16.0f, pos.y + 1) * static_cast<float>(Chunk::CHUNK_SIZE);
-        if (!bypassFrustum && Config::frustumCulling && !camera.isBoxInFrustum(minBound, maxBound)) continue; 
-        
-        if (!column->indices.empty()) {
-            DrawElementsIndirectCommand cmd;
-            cmd.count = column->indices.size();
-            cmd.instanceCount = 1;
-            cmd.firstIndex = column->indexOffset;
-            cmd.baseVertex = column->vertexOffset;
-            cmd.baseInstance = 0;
-            opaqueCmds.push_back(cmd);
-        }
-        
-        if (!column->transparentIndices.empty()) {
-            DrawElementsIndirectCommand cmd;
-            cmd.count = column->transparentIndices.size();
-            cmd.instanceCount = 1;
-            cmd.firstIndex = column->transparentIndexOffset;
-            cmd.baseVertex = column->vertexOffset;
-            cmd.baseInstance = 0;
-            transCmds.push_back(cmd);
-        }
+        mdiCommandsDirty_ = false;
     }
 
     glBindVertexArray(mdiVAO_);
     
-    if (!opaqueCmds.empty()) {
+    if (!cachedOpaqueCmds_.empty()) {
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, mdiIndirectBufferOpaque_);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, opaqueCmds.size() * sizeof(DrawElementsIndirectCommand), opaqueCmds.data(), GL_DYNAMIC_DRAW);
-        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, opaqueCmds.size(), 0);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedOpaqueCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedOpaqueCmds_.data(), GL_DYNAMIC_DRAW);
+        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, cachedOpaqueCmds_.size(), 0);
     }
     
-    if (!transCmds.empty()) {
+    if (!cachedTransCmds_.empty()) {
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, mdiIndirectBufferTrans_);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, transCmds.size() * sizeof(DrawElementsIndirectCommand), transCmds.data(), GL_DYNAMIC_DRAW);
-        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, transCmds.size(), 0);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedTransCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedTransCmds_.data(), GL_DYNAMIC_DRAW);
+        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, cachedTransCmds_.size(), 0);
     }
     
     glBindVertexArray(0);
@@ -396,6 +442,7 @@ void ChunkManager::setVoxelGlobal(int x, int y, int z, uint8_t type) {
         // Rebuild the mesh instantly on main thread for instantaneous player feedback
         it->second->generateMesh();
         columns_[glm::ivec2(cx, cz)]->needsUpdate = true;
+        mdiCommandsDirty_ = true;
 
         // Update padding voxel data on direct neighboring faces!
         auto checkNeighbor = [&](int dx, int dy, int dz) {
