@@ -21,6 +21,7 @@ namespace Config {
     extern int windowWidth;
     extern int windowHeight;
     extern int fpsCap;
+    extern bool vsync;
 
     // Player & Controls Settings
     extern float playerSpeed;
@@ -33,16 +34,39 @@ namespace Config {
     extern int renderDistanceY;
     extern bool frustumCulling;
 
-    // Graphics & Shaders Settings
+    // === Granular Shader Settings ===
+    // Master toggle
     extern bool enableShaders;
+    
+    // Shadows
     extern bool enableShadows;
+    extern float shadowIntensity;      // 0.0 = no shadow, 1.0 = pitch black
+    extern int shadowMapSize;          // 1024, 2048, 4096
+    
+    // Water
+    extern int waterMode;              // 0 = Basic flat, 1 = Advanced (waves, reflections)
+    
+    // Lighting  
+    extern bool enableFog;
+    extern float fogDensity;
+    extern bool enableDirectionalFaceShading; // Darkens N/S/E/W faces
+    extern float ambientBrightness;    // Min ambient light (brighter nights)
     extern float dayTimeSpeed;
+    
+    // Wind effects
+    extern bool enableLeafWind;
+    
+    // Ultra mode (Photon-like maximum quality)
+    extern bool ultraMode;
+    
+    // Clouds
+    extern bool enableClouds;
+    extern float cloudHeight;
+    extern float cloudScale;
 
     // Load & Save to disk
     void load();
     void save();
-    
-    extern float fogDensity;
     
     // Game State
     extern GameMode currentMode;

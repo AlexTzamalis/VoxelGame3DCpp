@@ -50,6 +50,10 @@ struct ChunkColumn {
     unsigned int indexOffset = 0;
     unsigned int transparentIndexOffset = 0;
     
+    // Cached counts for rendering after CPU data is freed
+    unsigned int opaqueCount = 0;
+    unsigned int transparentCount = 0;
+    
     bool needsUpdate = false;
     bool inVRAM = false;
     
@@ -82,6 +86,14 @@ private:
     unsigned int mdiIndirectBufferTrans_ = 0;
     unsigned int currentVertexOffset_ = 0;
     unsigned int currentIndexOffset_ = 0;
+    
+    // Cached MDI draw command arrays (rebuilt only when dirty)
+    mutable std::vector<DrawElementsIndirectCommand> cachedOpaqueCmds_;
+    mutable std::vector<DrawElementsIndirectCommand> cachedTransCmds_;
+    mutable bool mdiCommandsDirty_ = true;
+    
+    // Only re-scan chunks when camera moves to a new chunk
+    glm::ivec3 lastScanChunkPos_ = glm::ivec3(999999);
 
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;

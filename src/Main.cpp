@@ -291,9 +291,23 @@ int main() {
 
     Shader shader("shaders/basic.vert", "shaders/basic.frag");
     Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
+    Shader cloudShader("shaders/cloud.vert", "shaders/cloud.frag");
+    
+    // Fullscreen quad for cloud rendering
+    float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
+    unsigned int cloudVAO, cloudVBO;
+    glGenVertexArrays(1, &cloudVAO);
+    glGenBuffers(1, &cloudVBO);
+    glBindVertexArray(cloudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cloudVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
     
     // --- Set up Shadow Map FBO ---
-    const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
+    unsigned int shadowTexSize = 2048; // Will be recreated if config changes
+    const unsigned int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
     unsigned int depthMapFBO;
     glGenFramebuffers(1, &depthMapFBO);
     
@@ -386,7 +400,7 @@ int main() {
             float timeVal = static_cast<float>(glfwGetTime());
             float dayPhase = timeVal * Config::dayTimeSpeed;
             
-            // Vector pointing TOWARDS the sun
+            // Vector pointing TOWARDS the sun - GLOBAL axis, not relative to player
             glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.3f));
             float sunHeight = sunDir.y;
 
@@ -403,7 +417,7 @@ int main() {
             glm::vec3 lightColor;
             if (sunHeight > 0.2f) lightColor = glm::vec3(1.2f, 1.1f, 1.0f); // Bright Midday
             else if (sunHeight > 0.0f) lightColor = glm::mix(glm::vec3(1.2f, 0.5f, 0.2f), glm::vec3(1.2f, 1.1f, 1.0f), sunHeight / 0.2f); // Golden Hour
-            else lightColor = glm::vec3(0.15f, 0.2f, 0.35f); // Piercing Moonlight tint
+            else lightColor = glm::vec3(0.1f, 0.12f, 0.2f) + glm::vec3(Config::ambientBrightness * 0.3f); // Moonlight + ambient boost
 
             // Use the moon as the light source effectively if the sun is down
             glm::vec3 shaderLightDir = sunHeight > 0.0f ? sunDir : glm::vec3(-sunDir.x, -sunDir.y, -sunDir.z); 
@@ -422,7 +436,13 @@ int main() {
             float shadowDist = Config::renderDistance * 16.0f; 
             glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
             
-            glm::vec3 lightTarget = camera.position(); 
+            // Shadow light position: GLOBAL, snapped to chunk grid for stability
+            // Use camera Y so shadows actually cover the terrain the player sees
+            glm::vec3 lightTarget = glm::vec3(
+                std::floor(camera.position().x / 16.0f) * 16.0f,
+                camera.position().y,
+                std::floor(camera.position().z / 16.0f) * 16.0f
+            );
             glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
             
             glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -468,6 +488,15 @@ int main() {
             shader.setInt("isUnderwater", isUnderwater ? 1 : 0);
             shader.setVec3("cameraPos", camera.position());
             shader.setVec3("skyColor", skyColor);
+            
+            // Granular shader uniforms
+            shader.setFloat("shadowIntensity", Config::shadowIntensity);
+            shader.setInt("enableFog", Config::enableFog ? 1 : 0);
+            shader.setInt("enableFaceShading", Config::enableDirectionalFaceShading ? 1 : 0);
+            shader.setFloat("ambientBrightness", Config::ambientBrightness);
+            shader.setInt("waterMode", Config::waterMode);
+            shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
+            shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
             
             // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
@@ -525,6 +554,30 @@ int main() {
 
             // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
+            
+            // Cloud Rendering Pass
+            if (Config::enableClouds && Config::enableShaders) {
+                glDepthMask(GL_FALSE); // Don't write to depth buffer
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                
+                cloudShader.use();
+                glm::mat4 invViewProj = glm::inverse(camera.projectionMatrix() * camera.viewMatrix());
+                cloudShader.setMat4("invViewProj", invViewProj);
+                cloudShader.setVec3("cameraPos", camera.position());
+                cloudShader.setVec3("lightDir", shaderLightDir);
+                cloudShader.setVec3("lightColor", lightColor);
+                cloudShader.setVec3("skyColor", skyColor);
+                cloudShader.setFloat("time", timeVal);
+                cloudShader.setFloat("cloudHeight", Config::cloudHeight);
+                cloudShader.setFloat("cloudScale", Config::cloudScale);
+                
+                glBindVertexArray(cloudVAO);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                
+                glDepthMask(GL_TRUE);
+            }
         } else {
             // Main Menu / Background Canvas (Dirt Brown color)
             glClearColor(0.12f, 0.09f, 0.07f, 1.0f);
@@ -534,11 +587,31 @@ int main() {
         // Draw Player Live UI Overlay inside playing mode loop
         if (Config::currentState == GameState::PLAYING) {
             
-            // Draw simple FPS counter exactly in top left
+            // FPS Counter: updates once per second for readability
+            static float fpsTimer = 0.0f;
+            static float displayFps = 0.0f;
+            static float avgFps = 0.0f;
+            static int frameCount = 0;
+            static float fpsAccum = 0.0f;
+            
+            frameCount++;
+            fpsAccum += 1.0f / deltaTime;
+            fpsTimer += deltaTime;
+            if (fpsTimer >= 1.0f) {
+                displayFps = 1.0f / deltaTime;
+                avgFps = fpsAccum / frameCount;
+                fpsTimer = 0.0f;
+                frameCount = 0;
+                fpsAccum = 0.0f;
+            }
+            
             ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-            ImGui::SetNextWindowBgAlpha(0.35f); // Transparent dark background
-            ImGui::Begin("FPS_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
-            ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
+            ImGui::SetNextWindowBgAlpha(0.4f);
+            ImGui::Begin("Debug_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "FPS: %.0f", displayFps);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Avg: %.0f", avgFps);
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "XYZ: %.1f / %.1f / %.1f", 
+                camera.position().x, camera.position().y, camera.position().z);
             ImGui::End();
 
             // perfectly centered mathematical Crosshair
@@ -738,8 +811,8 @@ int main() {
             ImGui::End();
         }
         else if (Config::currentState == GameState::SETTINGS) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(500, 420), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 300, 40), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(600, Config::windowHeight - 80.0f), ImGuiCond_Always);
             ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
             if (ImGui::BeginTabBar("SettingsTabs")) {
@@ -747,7 +820,8 @@ int main() {
                     ImGui::Spacing();
                     ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
                     ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
-                    ImGui::SliderInt("Max FPS", &Config::fpsCap, 30, 240);
+                    ImGui::SliderInt("Max FPS (0=Unlimited)", &Config::fpsCap, 0, 500);
+                    ImGui::Checkbox("VSync", &Config::vsync);
                     if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
                         camera.setFov(Config::cameraFov);
                     }
@@ -756,24 +830,58 @@ int main() {
                 
                 if (ImGui::BeginTabItem("Shaders")) {
                     ImGui::Spacing();
+                    ImGui::SeparatorText("Master");
+                    ImGui::Checkbox("Enable Advanced Shaders", &Config::enableShaders);
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "  ");
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("ULTRA MODE (Photon-like)", &Config::ultraMode)) {
+                        if (Config::ultraMode) {
+                            Config::enableShaders = true;
+                            Config::enableShadows = true;
+                            Config::enableFog = true;
+                            Config::enableDirectionalFaceShading = true;
+                            Config::enableClouds = true;
+                            Config::enableLeafWind = true;
+                            Config::waterMode = 1;
+                        }
+                    }
+                    if (Config::ultraMode) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "All visual features enabled at maximum quality");
+                    }
                     
-                    bool changedShaders = ImGui::Checkbox("Enable Advanced Shaders (Water, Fog, Radiosity)", &Config::enableShaders);
-                    
+                    ImGui::SeparatorText("Shadows");
                     if (Config::enableShaders) {
-                        ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &Config::enableShadows);
+                        ImGui::Checkbox("Enable Shadows", &Config::enableShadows);
+                        if (Config::enableShadows) {
+                            ImGui::SliderFloat("Shadow Intensity", &Config::shadowIntensity, 0.1f, 1.0f);
+                            ImGui::SliderInt("Shadow Map Size", &Config::shadowMapSize, 512, 4096);
+                        }
                     } else {
                         ImGui::BeginDisabled();
-                        bool f = false; ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &f);
+                        bool f = false; ImGui::Checkbox("Enable Shadows", &f);
                         ImGui::EndDisabled();
                     }
                     
-                    // Allow UI to tweak Day / Night Speed dynamically
-                    // Display it slightly easier to read (multiplier over 24h)
-                    float currentHours = (0.0021816f / Config::dayTimeSpeed) * 0.8f; // ~1h baseline display
-                    if (ImGui::SliderFloat("Day Speed Mult", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {
-                        // Dynamically updates gameplay lighting loop above!
+                    ImGui::SeparatorText("Water");
+                    const char* waterModes[] = { "Basic (Flat)", "Advanced (Waves + Reflections)" };
+                    ImGui::Combo("Water Mode", &Config::waterMode, waterModes, 2);
+                    
+                    ImGui::SeparatorText("Clouds");
+                    ImGui::Checkbox("Enable Clouds", &Config::enableClouds);
+                    if (Config::enableClouds) {
+                        ImGui::SliderFloat("Cloud Height", &Config::cloudHeight, 100.0f, 400.0f);
+                        ImGui::SliderFloat("Cloud Scale", &Config::cloudScale, 0.0003f, 0.003f, "%.4f");
                     }
-                    ImGui::TextDisabled("Default is 0.00218 (48 real-life minutes for 24h)");
+                    
+                    ImGui::SeparatorText("Lighting & Atmosphere");
+                    ImGui::Checkbox("Enable Fog", &Config::enableFog);
+                    ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
+                    ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                    ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
+                    
+                    ImGui::SeparatorText("Day/Night Cycle");
+                    if (ImGui::SliderFloat("Day Speed", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {}
+                    ImGui::TextDisabled("Default: 0.00218 (48min per 24h)");
                     
                     ImGui::EndTabItem();
                 }
@@ -874,13 +982,15 @@ int main() {
         glfwPollEvents();
         
         // Manual Frame Pacing & Latency Control
-        float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
-        float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
+        // Apply VSync setting
+        glfwSwapInterval(Config::vsync ? 1 : 0);
         
-        if (frameTime < frameTarget) {
-            float sleepTime = frameTarget - frameTime;
-            // Sleep the core CPU thread to drop rendering cycles and smooth out GPU stutter!
-            std::this_thread::sleep_for(std::chrono::duration<float>(sleepTime));
+        if (!Config::vsync && Config::fpsCap > 0) {
+            float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
+            float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
+            if (frameTime < frameTarget) {
+                while (static_cast<float>(glfwGetTime()) - currentFrame < frameTarget) {}
+            }
         }
     }
 
