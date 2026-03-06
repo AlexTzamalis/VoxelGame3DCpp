@@ -291,9 +291,23 @@ int main() {
 
     Shader shader("shaders/basic.vert", "shaders/basic.frag");
     Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
+    Shader cloudShader("shaders/cloud.vert", "shaders/cloud.frag");
+    
+    // Fullscreen quad for cloud rendering
+    float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
+    unsigned int cloudVAO, cloudVBO;
+    glGenVertexArrays(1, &cloudVAO);
+    glGenBuffers(1, &cloudVBO);
+    glBindVertexArray(cloudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cloudVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
     
     // --- Set up Shadow Map FBO ---
-    const unsigned int SHADOW_WIDTH = Config::shadowMapSize, SHADOW_HEIGHT = Config::shadowMapSize;
+    unsigned int shadowTexSize = 2048; // Will be recreated if config changes
+    const unsigned int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
     unsigned int depthMapFBO;
     glGenFramebuffers(1, &depthMapFBO);
     
@@ -422,11 +436,11 @@ int main() {
             float shadowDist = Config::renderDistance * 16.0f; 
             glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
             
-            // Shadow light position: GLOBAL, not relative to player camera
-            // Use a fixed world-space origin so shadows stay consistent as you move
+            // Shadow light position: GLOBAL, snapped to chunk grid for stability
+            // Use camera Y so shadows actually cover the terrain the player sees
             glm::vec3 lightTarget = glm::vec3(
                 std::floor(camera.position().x / 16.0f) * 16.0f,
-                0.0f,
+                camera.position().y,
                 std::floor(camera.position().z / 16.0f) * 16.0f
             );
             glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
@@ -482,6 +496,7 @@ int main() {
             shader.setFloat("ambientBrightness", Config::ambientBrightness);
             shader.setInt("waterMode", Config::waterMode);
             shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
+            shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
             
             // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
@@ -539,6 +554,30 @@ int main() {
 
             // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
+            
+            // Cloud Rendering Pass
+            if (Config::enableClouds && Config::enableShaders) {
+                glDepthMask(GL_FALSE); // Don't write to depth buffer
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                
+                cloudShader.use();
+                glm::mat4 invViewProj = glm::inverse(camera.projectionMatrix() * camera.viewMatrix());
+                cloudShader.setMat4("invViewProj", invViewProj);
+                cloudShader.setVec3("cameraPos", camera.position());
+                cloudShader.setVec3("lightDir", shaderLightDir);
+                cloudShader.setVec3("lightColor", lightColor);
+                cloudShader.setVec3("skyColor", skyColor);
+                cloudShader.setFloat("time", timeVal);
+                cloudShader.setFloat("cloudHeight", Config::cloudHeight);
+                cloudShader.setFloat("cloudScale", Config::cloudScale);
+                
+                glBindVertexArray(cloudVAO);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                
+                glDepthMask(GL_TRUE);
+            }
         } else {
             // Main Menu / Background Canvas (Dirt Brown color)
             glClearColor(0.12f, 0.09f, 0.07f, 1.0f);
@@ -548,11 +587,31 @@ int main() {
         // Draw Player Live UI Overlay inside playing mode loop
         if (Config::currentState == GameState::PLAYING) {
             
-            // Draw simple FPS counter exactly in top left
+            // FPS Counter: updates once per second for readability
+            static float fpsTimer = 0.0f;
+            static float displayFps = 0.0f;
+            static float avgFps = 0.0f;
+            static int frameCount = 0;
+            static float fpsAccum = 0.0f;
+            
+            frameCount++;
+            fpsAccum += 1.0f / deltaTime;
+            fpsTimer += deltaTime;
+            if (fpsTimer >= 1.0f) {
+                displayFps = 1.0f / deltaTime;
+                avgFps = fpsAccum / frameCount;
+                fpsTimer = 0.0f;
+                frameCount = 0;
+                fpsAccum = 0.0f;
+            }
+            
             ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-            ImGui::SetNextWindowBgAlpha(0.35f); // Transparent dark background
-            ImGui::Begin("FPS_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
-            ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
+            ImGui::SetNextWindowBgAlpha(0.4f);
+            ImGui::Begin("Debug_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "FPS: %.0f", displayFps);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Avg: %.0f", avgFps);
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "XYZ: %.1f / %.1f / %.1f", 
+                camera.position().x, camera.position().y, camera.position().z);
             ImGui::End();
 
             // perfectly centered mathematical Crosshair
@@ -752,8 +811,8 @@ int main() {
             ImGui::End();
         }
         else if (Config::currentState == GameState::SETTINGS) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 280, Config::windowHeight / 2.0f - 280), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 300, 40), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(600, Config::windowHeight - 80.0f), ImGuiCond_Always);
             ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
             if (ImGui::BeginTabBar("SettingsTabs")) {
@@ -761,7 +820,7 @@ int main() {
                     ImGui::Spacing();
                     ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
                     ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
-                    ImGui::SliderInt("Max FPS", &Config::fpsCap, 30, 500);
+                    ImGui::SliderInt("Max FPS (0=Unlimited)", &Config::fpsCap, 0, 500);
                     ImGui::Checkbox("VSync", &Config::vsync);
                     if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
                         camera.setFov(Config::cameraFov);
@@ -773,6 +832,22 @@ int main() {
                     ImGui::Spacing();
                     ImGui::SeparatorText("Master");
                     ImGui::Checkbox("Enable Advanced Shaders", &Config::enableShaders);
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "  ");
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("ULTRA MODE (Photon-like)", &Config::ultraMode)) {
+                        if (Config::ultraMode) {
+                            Config::enableShaders = true;
+                            Config::enableShadows = true;
+                            Config::enableFog = true;
+                            Config::enableDirectionalFaceShading = true;
+                            Config::enableClouds = true;
+                            Config::enableLeafWind = true;
+                            Config::waterMode = 1;
+                        }
+                    }
+                    if (Config::ultraMode) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "All visual features enabled at maximum quality");
+                    }
                     
                     ImGui::SeparatorText("Shadows");
                     if (Config::enableShaders) {
@@ -790,6 +865,13 @@ int main() {
                     ImGui::SeparatorText("Water");
                     const char* waterModes[] = { "Basic (Flat)", "Advanced (Waves + Reflections)" };
                     ImGui::Combo("Water Mode", &Config::waterMode, waterModes, 2);
+                    
+                    ImGui::SeparatorText("Clouds");
+                    ImGui::Checkbox("Enable Clouds", &Config::enableClouds);
+                    if (Config::enableClouds) {
+                        ImGui::SliderFloat("Cloud Height", &Config::cloudHeight, 100.0f, 400.0f);
+                        ImGui::SliderFloat("Cloud Scale", &Config::cloudScale, 0.0003f, 0.003f, "%.4f");
+                    }
                     
                     ImGui::SeparatorText("Lighting & Atmosphere");
                     ImGui::Checkbox("Enable Fog", &Config::enableFog);
@@ -900,16 +982,14 @@ int main() {
         glfwPollEvents();
         
         // Manual Frame Pacing & Latency Control
-        float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
-        float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
-        
         // Apply VSync setting
         glfwSwapInterval(Config::vsync ? 1 : 0);
         
-        if (!Config::vsync && frameTime < frameTarget) {
-            // Busy-wait for precise FPS cap (sleep_for is too imprecise on Windows)
-            while (static_cast<float>(glfwGetTime()) - currentFrame < frameTarget) {
-                // Spin
+        if (!Config::vsync && Config::fpsCap > 0) {
+            float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
+            float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
+            if (frameTime < frameTarget) {
+                while (static_cast<float>(glfwGetTime()) - currentFrame < frameTarget) {}
             }
         }
     }

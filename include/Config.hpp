@@ -55,6 +55,14 @@ namespace Config {
     
     // Wind effects
     extern bool enableLeafWind;
+    
+    // Ultra mode (Photon-like maximum quality)
+    extern bool ultraMode;
+    
+    // Clouds
+    extern bool enableClouds;
+    extern float cloudHeight;
+    extern float cloudScale;
 
     // Load & Save to disk
     void load();

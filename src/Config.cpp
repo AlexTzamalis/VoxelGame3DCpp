@@ -39,6 +39,14 @@ namespace Config {
     // Wind
     bool enableLeafWind = true;
     
+    // Ultra mode
+    bool ultraMode = false;
+    
+    // Clouds
+    bool enableClouds = true;
+    float cloudHeight = 200.0f;
+    float cloudScale = 0.0008f;
+    
     GameMode currentMode = GameMode::CREATIVE;
     GameState currentState = GameState::MAIN_MENU;
     int currentWorldType = 0;
@@ -64,6 +72,10 @@ namespace Config {
                 else if (key == "AMBIENT_BRIGHTNESS") file >> ambientBrightness;
                 else if (key == "DAY_SPEED") file >> dayTimeSpeed;
                 else if (key == "LEAF_WIND") file >> enableLeafWind;
+                else if (key == "ULTRA_MODE") file >> ultraMode;
+                else if (key == "ENABLE_CLOUDS") file >> enableClouds;
+                else if (key == "CLOUD_HEIGHT") file >> cloudHeight;
+                else if (key == "CLOUD_SCALE") file >> cloudScale;
                 else if (key == "PLAYER_SPEED") file >> playerSpeed;
                 else if (key == "SPRINT_SPEED") file >> playerSprintSpeed;
                 else if (key == "SENSITIVITY") file >> mouseSensitivity;
@@ -89,6 +101,10 @@ namespace Config {
                  << "AMBIENT_BRIGHTNESS " << ambientBrightness << "\n"
                  << "DAY_SPEED " << dayTimeSpeed << "\n"
                  << "LEAF_WIND " << enableLeafWind << "\n"
+                 << "ULTRA_MODE " << ultraMode << "\n"
+                 << "ENABLE_CLOUDS " << enableClouds << "\n"
+                 << "CLOUD_HEIGHT " << cloudHeight << "\n"
+                 << "CLOUD_SCALE " << cloudScale << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"
                  << "SPRINT_SPEED " << playerSprintSpeed << "\n"
                  << "SENSITIVITY " << mouseSensitivity << "\n";
