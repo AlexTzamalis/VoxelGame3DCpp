@@ -321,8 +321,6 @@ int main() {
     Shader playerShader("shaders/player.vert", "shaders/player.frag");
     
     PlayerRenderer playerRenderer;
-    playerRenderer.init();
-    
     // Fullscreen quad for cloud rendering
     float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
     unsigned int cloudVAO, cloudVBO;
@@ -368,6 +366,8 @@ int main() {
     if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
         std::cerr << "Dynamic Texture Pack loading failed! Ensure default.zip exists in assets/texture_packs/\n";
     }
+
+    playerRenderer.init();
 
     ChunkManager chunkManager;
     globalChunkManager = &chunkManager;

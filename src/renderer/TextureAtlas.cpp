@@ -59,9 +59,12 @@ bool TextureAtlas::build(const std::string& directoryPath) {
                     maxTileExt = std::max({maxTileExt, img.width, img.height});
                 }
                 images.push_back(img);
+            } else {
+                std::cerr << "stbi_load failed on: " << entry.path().string() << "\n";
             }
         }
     }
+    std::cerr << "Total images loaded: " << images.size() << "\n";
 
     if (atlasTextureId) glDeleteTextures(1, &atlasTextureId);
     for (auto& [name, tex] : guiTextures) glDeleteTextures(1, &tex);
@@ -126,6 +129,8 @@ bool TextureAtlas::build(const std::string& directoryPath) {
 
 unsigned int TextureAtlas::getGuiTexture(const std::string& name) {
     if (guiTextures.count(name)) return guiTextures[name];
+    std::cerr << "GUI Texture not found: " << name << ". Available GUI textures:\n";
+    for (auto& [n, t] : guiTextures) std::cerr << "  " << n << "\n";
     return 0;
 }
 
