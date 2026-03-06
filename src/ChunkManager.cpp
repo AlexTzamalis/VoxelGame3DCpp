@@ -199,7 +199,7 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         lastScanChunkPos_ = cameraChunkPos;
         
         // Build active set for unloading
-        std::unordered_set<int64_t> activeKeys;
+        std::unordered_set<glm::ivec3, IVec3Hash> activeKeys;
         std::vector<glm::ivec3> newTasks;
 
         for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
@@ -211,8 +211,7 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                     if (gy < -32 || gy > 16) continue;
                     
                     glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
-                    int64_t key = ((int64_t)chunkPos.x << 40) | ((int64_t)(chunkPos.y & 0xFFFFF) << 20) | (int64_t)(chunkPos.z & 0xFFFFF);
-                    activeKeys.insert(key);
+                    activeKeys.insert(chunkPos);
 
                     if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
                         generatingChunks_[chunkPos] = true;
@@ -225,18 +224,18 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         if (!newTasks.empty()) {
             std::lock_guard<std::mutex> lock(queueMutex_);
             pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
+            // Sort by distance to prioritize nearby chunks
             std::sort(pendingTasks_.begin(), pendingTasks_.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
-                float distA = (a.x - cameraChunkPos.x)*(a.x - cameraChunkPos.x) + (a.y - cameraChunkPos.y)*(a.y - cameraChunkPos.y) + (a.z - cameraChunkPos.z)*(a.z - cameraChunkPos.z);
-                float distB = (b.x - cameraChunkPos.x)*(b.x - cameraChunkPos.x) + (b.y - cameraChunkPos.y)*(b.y - cameraChunkPos.y) + (b.z - cameraChunkPos.z)*(b.z - cameraChunkPos.z);
-                return distA > distB;
+                float distA = glm::distance(glm::vec3(a), glm::vec3(cameraChunkPos));
+                float distB = glm::distance(glm::vec3(b), glm::vec3(cameraChunkPos));
+                return distA > distB; // Back of vector is processed first
             });
             cv_.notify_all();
         }
 
         // Unload chunks outside radius
         for (auto it = chunks_.begin(); it != chunks_.end(); ) {
-            int64_t key = ((int64_t)it->first.x << 40) | ((int64_t)(it->first.y & 0xFFFFF) << 20) | (int64_t)(it->first.z & 0xFFFFF);
-            if (activeKeys.find(key) == activeKeys.end()) {
+            if (activeKeys.find(it->first) == activeKeys.end()) {
                 if (it->second->isModified_) {
                     WorldManager::saveChunk(it->first, it->second->getVoxels());
                 }
