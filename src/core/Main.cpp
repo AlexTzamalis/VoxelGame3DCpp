@@ -606,8 +606,8 @@ int main() {
             // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
             
-            // Render Player (if not 1st person)
-            if (camera.getViewMode() != CameraViewMode::FIRST_PERSON) {
+            // Render Player (hands/legs always visible; head/body hidden in 1st person internally)
+            {
                 playerShader.use();
                 playerShader.setMat4("view", camera.viewMatrix());
                 playerShader.setMat4("projection", camera.projectionMatrix());
@@ -624,8 +624,11 @@ int main() {
                 
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, depthMap);
+                static glm::vec3 lastPlayerPos = camera.position();
+                glm::vec3 actualVelocity = (camera.position() - lastPlayerPos) / deltaTime;
+                lastPlayerPos = camera.position();
                 
-                playerRenderer.render(camera, timeVal, camera.getVelocity(), false, playerShader.id());
+                playerRenderer.render(camera, timeVal, actualVelocity, false, playerShader.id());
             }
 
             // Cloud Rendering Pass
