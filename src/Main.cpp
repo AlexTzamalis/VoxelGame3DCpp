@@ -505,6 +505,8 @@ int main() {
             shader.setInt("waterMode", Config::waterMode);
             shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
             shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
+            shader.setFloat("saturation", Config::saturation);
+            shader.setFloat("contrast", Config::contrast);
             
             // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
@@ -887,6 +889,8 @@ int main() {
                     ImGui::Checkbox("Enable Fog", &Config::enableFog);
                     ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
                     ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                    ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
+                    ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
                     ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
                     
                     ImGui::SeparatorText("Day/Night Cycle");
