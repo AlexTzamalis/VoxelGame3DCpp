@@ -46,6 +46,7 @@ build/
 cmake-build-*/
 out/
 
+
 # IDEs
 .idea/
 .vscode/
@@ -54,6 +55,8 @@ out/
 *.njsproj
 *.sln
 *.sw?
+.antigravityrules/
+.cursorrules/
 
 # OS produced files
 .DS_Store
@@ -75,3 +78,5 @@ assets/texture_packs/*.jpg
 assets/texture_packs/*.jpeg
 logs/
 build_log*.txt
+
+*.log

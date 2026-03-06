@@ -321,8 +321,6 @@ int main() {
     Shader playerShader("shaders/player.vert", "shaders/player.frag");
     
     PlayerRenderer playerRenderer;
-    playerRenderer.init();
-    
     // Fullscreen quad for cloud rendering
     float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
     unsigned int cloudVAO, cloudVBO;
@@ -365,12 +363,19 @@ int main() {
         return -1;
     }
 
+    std::cerr << "[Trace] Building Texture Atlas...\n";
     if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
         std::cerr << "Dynamic Texture Pack loading failed! Ensure default.zip exists in assets/texture_packs/\n";
     }
 
+    std::cerr << "[Trace] Initializing PlayerRenderer...\n";
+    playerRenderer.init();
+
+    std::cerr << "[Trace] Creating ChunkManager...\n";
     ChunkManager chunkManager;
     globalChunkManager = &chunkManager;
+    
+    std::cerr << "[Trace] Configuring Camera...\n";
 
     camera.setRaycastFunc([](glm::vec3 start, glm::vec3 dir, float maxDist) -> float {
         glm::ivec3 hitPos, prevPos;
@@ -601,8 +606,8 @@ int main() {
             // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
             
-            // Render Player (if not 1st person)
-            if (camera.getViewMode() != CameraViewMode::FIRST_PERSON) {
+            // Render Player (hands/legs always visible; head/body hidden in 1st person internally)
+            {
                 playerShader.use();
                 playerShader.setMat4("view", camera.viewMatrix());
                 playerShader.setMat4("projection", camera.projectionMatrix());
@@ -619,8 +624,11 @@ int main() {
                 
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, depthMap);
+                static glm::vec3 lastPlayerPos = camera.position();
+                glm::vec3 actualVelocity = (camera.position() - lastPlayerPos) / deltaTime;
+                lastPlayerPos = camera.position();
                 
-                playerRenderer.render(camera, timeVal, camera.getVelocity(), false, playerShader.id());
+                playerRenderer.render(camera, timeVal, actualVelocity, false, playerShader.id());
             }
 
             // Cloud Rendering Pass

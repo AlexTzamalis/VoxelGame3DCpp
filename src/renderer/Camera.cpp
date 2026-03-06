@@ -104,10 +104,14 @@ void Camera::applyPhysics(float deltaTime, const std::function<bool(glm::vec3, g
     playerBase.y -= eyeOffsetY_;
 
     // === AXIS-SEPARATED COLLISION ===
-    auto collides = [&](glm::vec3 pos) -> bool {
+    auto collides = [&](glm::vec3 feetPos) -> bool {
         if (Config::currentMode == GameMode::SPECTATOR) return false;
-        glm::vec3 minB = pos - boundingBoxHalfExtents_;
-        glm::vec3 maxB = pos + boundingBoxHalfExtents_;
+        
+        glm::vec3 center = feetPos;
+        center.y += boundingBoxHalfExtents_.y; // Center is half-height above feet
+        
+        glm::vec3 minB = center - boundingBoxHalfExtents_;
+        glm::vec3 maxB = center + boundingBoxHalfExtents_;
         return checkCollisionFunc(minB, maxB);
     };
 

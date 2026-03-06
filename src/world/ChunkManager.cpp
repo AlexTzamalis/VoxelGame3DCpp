@@ -234,9 +234,17 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             cv_.notify_all();
         }
 
-        // Unload chunks outside radius
+        // Unload chunks outside radius WITH HYSTERESIS to stop flickering
+        int thresholdH2 = (Config::renderDistance + 1) * (Config::renderDistance + 1);
+        int thresholdY = Config::renderDistanceY + 1;
+
         for (auto it = chunks_.begin(); it != chunks_.end(); ) {
-            if (activeKeys.find(it->first) == activeKeys.end()) {
+            int dx = it->first.x - cameraChunkPos.x;
+            int dy = it->first.y - cameraChunkPos.y;
+            int dz = it->first.z - cameraChunkPos.z;
+
+            // Adding 1 chunk of hysteresis margin so moving back and forth doesn't constantly reload
+            if (dx*dx + dz*dz > thresholdH2 || std::abs(dy) > thresholdY) {
                 if (it->second->isModified_) {
                     WorldManager::saveChunk(it->first, it->second->getVoxels());
                 }

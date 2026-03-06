@@ -23,21 +23,17 @@ void PlayerRenderer::addCube(glm::vec3 center, glm::vec3 size, int u, int v, int
         return glm::vec2(x * iw, y * ih);
     };
 
-    // Half size for easy cube corners
     glm::vec3 hs = size * 0.5f;
 
-    // Corner vertices relative to center
-    // Y up, -Z front, +X right
-    glm::vec3 p0(-hs.x, -hs.y,  hs.z); // Front Bottom Left
-    glm::vec3 p1( hs.x, -hs.y,  hs.z); // Front Bottom Right
-    glm::vec3 p2( hs.x,  hs.y,  hs.z); // Front Top Right
-    glm::vec3 p3(-hs.x,  hs.y,  hs.z); // Front Top Left
-    glm::vec3 p4(-hs.x, -hs.y, -hs.z); // Back Bottom Left
-    glm::vec3 p5( hs.x, -hs.y, -hs.z); // Back Bottom Right
-    glm::vec3 p6( hs.x,  hs.y, -hs.z); // Back Top Right
-    glm::vec3 p7(-hs.x,  hs.y, -hs.z); // Back Top Left
+    glm::vec3 p0(-hs.x, -hs.y,  hs.z); // +Z, -X
+    glm::vec3 p1( hs.x, -hs.y,  hs.z); // +Z, +X
+    glm::vec3 p2( hs.x,  hs.y,  hs.z); // +Z, +X
+    glm::vec3 p3(-hs.x,  hs.y,  hs.z); // +Z, -X
+    glm::vec3 p4(-hs.x, -hs.y, -hs.z); // -Z, -X
+    glm::vec3 p5( hs.x, -hs.y, -hs.z); // -Z, +X
+    glm::vec3 p6( hs.x,  hs.y, -hs.z); // -Z, +X
+    glm::vec3 p7(-hs.x,  hs.y, -hs.z); // -Z, -X
 
-    // Add face helper
     auto addFace = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 v3, glm::vec3 n, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3) {
         vertices_.push_back({v0 + center, uv0, n});
         vertices_.push_back({v1 + center, uv1, n});
@@ -47,29 +43,26 @@ void PlayerRenderer::addCube(glm::vec3 center, glm::vec3 size, int u, int v, int
         vertices_.push_back({v3 + center, uv3, n});
     };
 
-    // Front Face (looking at -Z)
-    addFace(p4, p5, p6, p7, glm::vec3(0, 0, -1),
-            getUV(u+d+w, v+d+h), getUV(u+d, v+d+h), getUV(u+d, v+d), getUV(u+d+w, v+d));
+    auto makeFace = [&](glm::vec3 pBL, glm::vec3 pBR, glm::vec3 pTR, glm::vec3 pTL, glm::vec3 n, int tx, int ty, int tw, int th) {
+        glm::vec2 uvBL = getUV(tx, ty + th);
+        glm::vec2 uvBR = getUV(tx + tw, ty + th);
+        glm::vec2 uvTR = getUV(tx + tw, ty);
+        glm::vec2 uvTL = getUV(tx, ty);
+        addFace(pBL, pBR, pTR, pTL, n, uvBL, uvBR, uvTR, uvTL);
+    };
 
-    // Back Face (looking at +Z)
-    addFace(p1, p0, p3, p2, glm::vec3(0, 0, 1),
-            getUV(u+d+w+w+w, v+d+h), getUV(u+d+w+w, v+d+h), getUV(u+d+w+w, v+d), getUV(u+d+w+w+w, v+d));
-
-    // Right Face (looking at +X)
-    addFace(p5, p1, p2, p6, glm::vec3(1, 0, 0),
-            getUV(u+d, v+d+h), getUV(u, v+d+h), getUV(u, v+d), getUV(u+d, v+d));
-
-    // Left Face (looking at -X)
-    addFace(p0, p4, p7, p3, glm::vec3(-1, 0, 0),
-            getUV(u+d+w+d, v+d+h), getUV(u+d+w, v+d+h), getUV(u+d+w, v+d), getUV(u+d+w+d, v+d));
-
-    // Top Face (looking at +Y)
-    addFace(p7, p6, p2, p3, glm::vec3(0, 1, 0),
-            getUV(u+d, v), getUV(u+d+w, v), getUV(u+d+w, v+d), getUV(u+d, v+d));
-
-    // Bottom Face (looking at -Y)
-    addFace(p0, p1, p5, p4, glm::vec3(0, -1, 0),
-            getUV(u+d+w, v), getUV(u+d+w+w, v), getUV(u+d+w+w, v+d), getUV(u+d+w, v+d));
+    // Front (-Z)
+    makeFace(p5, p4, p7, p6, glm::vec3(0, 0, -1), u + d, v + d, w, h);
+    // Back (+Z)
+    makeFace(p0, p1, p2, p3, glm::vec3(0, 0, 1), u + d + w + d, v + d, w, h);
+    // Right (+X)
+    makeFace(p1, p5, p6, p2, glm::vec3(1, 0, 0), u, v + d, d, h);
+    // Left (-X)
+    makeFace(p4, p0, p3, p7, glm::vec3(-1, 0, 0), u + d + w, v + d, d, h);
+    // Top (+Y)
+    makeFace(p6, p7, p3, p2, glm::vec3(0, 1, 0), u + d, v, w, d);
+    // Bottom (-Y)
+    makeFace(p1, p0, p4, p5, glm::vec3(0, -1, 0), u + d + w, v, w, d);
 }
 
 void PlayerRenderer::buildMesh() {
@@ -87,20 +80,16 @@ void PlayerRenderer::buildMesh() {
     // Pivot at bottom. Middle is at y=6px.
     addCube(glm::vec3(0.0f, 6.0f * px, 0.0f), glm::vec3(8.0f * px, 12.0f * px, 4.0f * px), 16, 16, 8, 12, 4); // 36-71
 
-    // Right Arm (4x12x4)
-    // Pivot at shoulder (top). Middle is at y=-6px.
+    // Right Arm (4x12x4) (+X)
     addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 40, 16, 4, 12, 4); // 72-107
 
-    // Left Arm (4x12x4)
-    // Pivot at shoulder (top). Middle is at y=-6px.
+    // Left Arm (4x12x4) (-X)
     addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 32, 48, 4, 12, 4); // 108-143
 
-    // Right Leg (4x12x4)
-    // Pivot at hip (top). Middle is at y=-6px.
+    // Right Leg (4x12x4) (+X)
     addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 0, 16, 4, 12, 4); // 144-179
 
-    // Left Leg (4x12x4)
-    // Pivot at hip (top). Middle is at y=-6px.
+    // Left Leg (4x12x4) (-X)
     addCube(glm::vec3(0.0f, -6.0f * px, 0.0f), glm::vec3(4.0f * px, 12.0f * px, 4.0f * px), 16, 48, 4, 12, 4); // 180-215
 
     vertexCount_ = vertices_.size();
@@ -142,26 +131,49 @@ void PlayerRenderer::init() {
 }
 
 void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity, bool isSprinting, int shaderId) {
-    if (camera.getViewMode() == CameraViewMode::FIRST_PERSON) return;
 
     glBindVertexArray(vao_);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureID_);
 
     float speed = glm::length(glm::vec2(velocity.x, velocity.z));
-    float targetSwing = (speed > 0.1f) ? (speed * 0.1f) : 0.0f;
-    static float currentSwing = 0.0f;
-    currentSwing += (targetSwing - currentSwing) * 0.1f; // Smooth transition
+    
+    static float lastTime = time;
+    float dt = time - lastTime;
+    if (dt < 0.0f) dt = 0.0f;
+    lastTime = time;
+    
+    static float animationPhase = 0.0f;
+    float swingFreq = std::min(speed * 1.5f, 15.0f); 
+    if (speed > 0.1f) {
+        animationPhase += swingFreq * dt;
+    }
 
-    float walkTime = speed > 0.1f ? time * 15.0f : 0.0f;
-    float armSwing = sin(walkTime) * currentSwing * 4.0f;
-    float legSwing = sin(walkTime) * currentSwing * 4.0f;
+    float currentSwing = std::min(speed * 0.15f, 1.2f); 
+    if (speed < 0.1f) currentSwing = 0.0f;
+    
+    static float smoothSwing = 0.0f;
+    smoothSwing += (currentSwing - smoothSwing) * 15.0f * dt;
+
+    float armSwing = sin(animationPhase) * smoothSwing;
+    float legSwing = sin(animationPhase) * smoothSwing;
 
     // Body origin (at feet)
     glm::vec3 playerPos = camera.position();
     playerPos.y -= 1.62f; // Offset from eye to feet
 
-    float yaw = glm::radians(-camera.yaw() - 90.0f); // Minecraft standard
+    bool isFirstPerson = camera.getViewMode() == CameraViewMode::FIRST_PERSON;
+    float px = 0.05625f;
+
+    if (isFirstPerson) {
+        // Push the rendered body slightly backwards in 1st person
+        // so looking down reveals the chest!
+        float pushOft = 3.0f * px;
+        playerPos.x -= cos(glm::radians(camera.yaw())) * pushOft;
+        playerPos.z -= sin(glm::radians(camera.yaw())) * pushOft;
+    }
+
+    float facingYaw = glm::radians(-camera.yaw() - 90.0f); // Minecraft standard
     
     // We pass the model to the shader via standard glUniformMatrix4fv
     int modelLoc = glGetUniformLocation(shaderId, "model");
@@ -169,7 +181,7 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
     auto drawPart = [&](int offset, glm::vec3 localPos, glm::vec3 rotAxis, float rotAngle) {
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, playerPos);
-        model = glm::rotate(model, yaw, glm::vec3(0, 1, 0));
+        model = glm::rotate(model, facingYaw, glm::vec3(0, 1, 0));
         model = glm::translate(model, localPos);
         if (rotAngle != 0.0f) model = glm::rotate(model, rotAngle, rotAxis);
         
@@ -177,23 +189,22 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
         glDrawArrays(GL_TRIANGLES, offset * 36, 36);
     };
 
-    float px = 0.05625f;
-
-    // 0: Head (pivot neck, rot pitch)
-    drawPart(0, glm::vec3(0, 24 * px, 0), glm::vec3(1, 0, 0), glm::radians(-camera.pitch()));
+    if (!isFirstPerson) {
+        // 0: Head (pivot neck, rot pitch)
+        drawPart(0, glm::vec3(0, 24 * px, 0), glm::vec3(1, 0, 0), glm::radians(-camera.pitch()));
+        // 1: Body (pivot bottom)
+        drawPart(1, glm::vec3(0, 12 * px, 0), glm::vec3(1, 0, 0), 0.0f);
+    }
     
-    // 1: Body (pivot bottom)
-    drawPart(1, glm::vec3(0, 12 * px, 0), glm::vec3(1, 0, 0), 0.0f);
-    
-    // 2: Right Arm (pivot shoulder)
+    // 2: Right Arm (pivot shoulder) (+X)
     drawPart(2, glm::vec3(6 * px, 24 * px, 0), glm::vec3(1, 0, 0), -armSwing);
     
-    // 3: Left Arm (pivot shoulder)
+    // 3: Left Arm (pivot shoulder) (-X)
     drawPart(3, glm::vec3(-6 * px, 24 * px, 0), glm::vec3(1, 0, 0), armSwing);
     
-    // 4: Right Leg (pivot hip)
+    // 4: Right Leg (pivot hip) (+X)
     drawPart(4, glm::vec3(2 * px, 12 * px, 0), glm::vec3(1, 0, 0), legSwing);
     
-    // 5: Left Leg (pivot hip)
+    // 5: Left Leg (pivot hip) (-X)
     drawPart(5, glm::vec3(-2 * px, 12 * px, 0), glm::vec3(1, 0, 0), -legSwing);
 }
