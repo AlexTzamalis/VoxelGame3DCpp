@@ -4,6 +4,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <unordered_set>
+#include <chrono>
 #include <GL/glew.h>
 
 ChunkManager::ChunkManager() : isRunning_(true) {
@@ -248,9 +249,15 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         }
     }
 
-    // Column rebuilds - process ALL dirty columns (work is lightweight)
+    // Column rebuilds - time-budgeted to prevent stutter
+    auto frameStart = std::chrono::high_resolution_clock::now();
+    const auto frameBudget = std::chrono::microseconds(4000); // 4ms max for rebuilds+uploads
+    
     for (auto it = columns_.begin(); it != columns_.end(); ) {
         if (it->second->needsUpdate) {
+            auto elapsed = std::chrono::high_resolution_clock::now() - frameStart;
+            if (elapsed > frameBudget) break; // Defer remaining to next frame
+            
             std::vector<VoxelVertex> allVerts;
             std::vector<unsigned int> allInds;
             std::vector<unsigned int> allTrans;
@@ -289,50 +296,57 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         ++it;
     }
 
-    // VRAM uploads - process all pending
-    bool needsDefrag = false;
-    for (auto& [pos, col] : columns_) {
-        if (!col->inVRAM && !col->vertices.empty()) {
-            if (currentVertexOffset_ + col->vertices.size() >= 40000000 || 
-                currentIndexOffset_ + col->indices.size() + col->transparentIndices.size() >= 60000000) {
-                needsDefrag = true;
-                break;
-            }
-        }
-    }
-
-    if (needsDefrag) {
-        defragmentVRAM();
-        mdiCommandsDirty_ = true;
-    } else {
-        glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
+    // VRAM uploads - also time-budgeted
+    auto uploadStart = std::chrono::high_resolution_clock::now();
+    auto totalElapsed = uploadStart - frameStart;
+    if (totalElapsed < frameBudget) {
+        bool needsDefrag = false;
         for (auto& [pos, col] : columns_) {
             if (!col->inVRAM && !col->vertices.empty()) {
-                col->vertexOffset = currentVertexOffset_;
-                col->indexOffset = currentIndexOffset_;
-                
-                glBufferSubData(GL_ARRAY_BUFFER, col->vertexOffset * sizeof(VoxelVertex), col->vertices.size() * sizeof(VoxelVertex), col->vertices.data());
-                
-                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->indexOffset * sizeof(unsigned int), col->indices.size() * sizeof(unsigned int), col->indices.data());
-                
-                col->transparentIndexOffset = currentIndexOffset_ + col->indices.size();
-                if (!col->transparentIndices.empty()) {
-                    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->transparentIndexOffset * sizeof(unsigned int), col->transparentIndices.size() * sizeof(unsigned int), col->transparentIndices.data());
+                if (currentVertexOffset_ + col->vertices.size() >= 40000000 || 
+                    currentIndexOffset_ + col->indices.size() + col->transparentIndices.size() >= 60000000) {
+                    needsDefrag = true;
+                    break;
                 }
+            }
+        }
 
-                currentVertexOffset_ += col->vertices.size();
-                currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
-                col->inVRAM = true;
-                mdiCommandsDirty_ = true;
-                
-                // Free CPU-side mesh data after VRAM upload
-                col->vertices.clear();
-                col->vertices.shrink_to_fit();
-                col->indices.clear();
-                col->indices.shrink_to_fit();
-                col->transparentIndices.clear();
-                col->transparentIndices.shrink_to_fit();
+        if (needsDefrag) {
+            defragmentVRAM();
+            mdiCommandsDirty_ = true;
+        } else {
+            glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
+            for (auto& [pos, col] : columns_) {
+                if (!col->inVRAM && !col->vertices.empty()) {
+                    auto elapsed = std::chrono::high_resolution_clock::now() - frameStart;
+                    if (elapsed > frameBudget) break; // Defer remaining to next frame
+                    
+                    col->vertexOffset = currentVertexOffset_;
+                    col->indexOffset = currentIndexOffset_;
+                    
+                    glBufferSubData(GL_ARRAY_BUFFER, col->vertexOffset * sizeof(VoxelVertex), col->vertices.size() * sizeof(VoxelVertex), col->vertices.data());
+                    
+                    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->indexOffset * sizeof(unsigned int), col->indices.size() * sizeof(unsigned int), col->indices.data());
+                    
+                    col->transparentIndexOffset = currentIndexOffset_ + col->indices.size();
+                    if (!col->transparentIndices.empty()) {
+                        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->transparentIndexOffset * sizeof(unsigned int), col->transparentIndices.size() * sizeof(unsigned int), col->transparentIndices.data());
+                    }
+
+                    currentVertexOffset_ += col->vertices.size();
+                    currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
+                    col->inVRAM = true;
+                    mdiCommandsDirty_ = true;
+                    
+                    // Free CPU-side mesh data after VRAM upload
+                    col->vertices.clear();
+                    col->vertices.shrink_to_fit();
+                    col->indices.clear();
+                    col->indices.shrink_to_fit();
+                    col->transparentIndices.clear();
+                    col->transparentIndices.shrink_to_fit();
+                }
             }
         }
     }
