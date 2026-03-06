@@ -43,7 +43,9 @@ bool TextureAtlas::build(const std::string& directoryPath) {
     for (const auto& entry : fs::recursive_directory_iterator(path)) {
         if (entry.path().extension() == ".png") {
             std::string relPath = fs::relative(entry.path(), path).string();
-            bool isGui = (relPath.find("gui") != std::string::npos) || (relPath.find("skin") != std::string::npos);
+            bool isGui = (relPath.find("gui") != std::string::npos) || 
+                         (relPath.find("skin") != std::string::npos) || 
+                         (relPath.find("skybox") != std::string::npos);
 
             ImageData img;
             img.name = entry.path().stem().string();
@@ -54,7 +56,9 @@ bool TextureAtlas::build(const std::string& directoryPath) {
             img.data = stbi_load(entry.path().string().c_str(), &img.width, &img.height, &img.channels, 4);
             
             if (img.data) {
-                if (!isGui) {
+                if (isGui) {
+                    std::cerr << "Found GUI image: " << img.name << "\n";
+                } else {
                     if (img.height > img.width && img.height % img.width == 0) img.height = img.width; 
                     maxTileExt = std::max({maxTileExt, img.width, img.height});
                 }

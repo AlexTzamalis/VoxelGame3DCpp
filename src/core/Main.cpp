@@ -363,14 +363,19 @@ int main() {
         return -1;
     }
 
+    std::cerr << "[Trace] Building Texture Atlas...\n";
     if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
         std::cerr << "Dynamic Texture Pack loading failed! Ensure default.zip exists in assets/texture_packs/\n";
     }
 
+    std::cerr << "[Trace] Initializing PlayerRenderer...\n";
     playerRenderer.init();
 
+    std::cerr << "[Trace] Creating ChunkManager...\n";
     ChunkManager chunkManager;
     globalChunkManager = &chunkManager;
+    
+    std::cerr << "[Trace] Configuring Camera...\n";
 
     camera.setRaycastFunc([](glm::vec3 start, glm::vec3 dir, float maxDist) -> float {
         glm::ivec3 hitPos, prevPos;
