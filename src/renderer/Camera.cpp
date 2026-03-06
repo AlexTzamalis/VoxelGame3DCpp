@@ -11,7 +11,35 @@ Camera::Camera(glm::vec3 position, float yaw, float pitch)
 }
 
 glm::mat4 Camera::viewMatrix() const {
-    return glm::lookAt(position_, position_ + front_, up_);
+    glm::vec3 renderPos = getRenderPosition();
+    glm::vec3 lookFront = (viewMode_ == CameraViewMode::THIRD_PERSON_FRONT) ? -front_ : front_;
+    return glm::lookAt(renderPos, renderPos + lookFront, up_);
+}
+
+glm::vec3 Camera::getRenderPosition() const {
+    if (viewMode_ == CameraViewMode::FIRST_PERSON) return position_;
+
+    glm::vec3 rayDir = (viewMode_ == CameraViewMode::THIRD_PERSON_BACK) ? -front_ : front_;
+    float maxDist = thirdPersonDistance_;
+    
+    // Default actual distance to max
+    float actualDist = maxDist;
+    
+    if (raycastFunc_) {
+        // Find distance to closest block (subtract a tiny amount to prevent clipping into walls)
+        float hitDist = raycastFunc_(position_, rayDir, maxDist);
+        if (hitDist >= 0.0f) {
+            actualDist = std::max(0.1f, hitDist - 0.2f); // 0.2 buffer from the wall
+        }
+    }
+    
+    return position_ + rayDir * actualDist;
+}
+
+void Camera::toggleViewMode() {
+    if (viewMode_ == CameraViewMode::FIRST_PERSON) viewMode_ = CameraViewMode::THIRD_PERSON_BACK;
+    else if (viewMode_ == CameraViewMode::THIRD_PERSON_BACK) viewMode_ = CameraViewMode::THIRD_PERSON_FRONT;
+    else viewMode_ = CameraViewMode::FIRST_PERSON;
 }
 
 float Camera::getEffectiveFov() const {

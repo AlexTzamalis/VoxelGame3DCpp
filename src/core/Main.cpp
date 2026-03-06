@@ -2,6 +2,7 @@
 #include "renderer/Shader.hpp"
 #include "renderer/Texture.hpp"
 #include "renderer/TextureAtlas.hpp"
+#include "renderer/PlayerRenderer.hpp"
 #include "world/ChunkManager.hpp"
 #include "core/Config.hpp"
 #include "world/WorldManager.hpp"
@@ -214,6 +215,11 @@ namespace {
             if (!f3Pressed) { Config::currentMode = GameMode::SURVIVAL; f3Pressed = true; }
         } else { f3Pressed = false; }
 
+        static bool f5Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS) {
+            if (!f5Pressed) { camera.toggleViewMode(); f5Pressed = true; }
+        } else { f5Pressed = false; }
+
         // Hotbar selection via number keys
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) playerInventory.setSelectedHotbar(0);
         if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) playerInventory.setSelectedHotbar(1);
@@ -312,6 +318,10 @@ int main() {
     Shader shader("shaders/basic.vert", "shaders/basic.frag");
     Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
     Shader cloudShader("shaders/cloud.vert", "shaders/cloud.frag");
+    Shader playerShader("shaders/player.vert", "shaders/player.frag");
+    
+    PlayerRenderer playerRenderer;
+    playerRenderer.init();
     
     // Fullscreen quad for cloud rendering
     float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
@@ -361,6 +371,16 @@ int main() {
 
     ChunkManager chunkManager;
     globalChunkManager = &chunkManager;
+
+    camera.setRaycastFunc([](glm::vec3 start, glm::vec3 dir, float maxDist) -> float {
+        glm::ivec3 hitPos, prevPos;
+        if (raycast(start, dir, maxDist, hitPos, prevPos)) {
+            // Found a solid block. Return the distance to the intersection boundary.
+            // A simple approximation is the distance to the center of the block minus ~0.5.
+            return glm::distance(start, glm::vec3(hitPos) + glm::vec3(0.5f)) - 0.5f;
+        }
+        return -1.0f; // No hit
+    });
 
     camera.setAspect(static_cast<float>(Config::windowWidth) / static_cast<float>(Config::windowHeight));
     camera.setFov(Config::cameraFov);
@@ -581,6 +601,28 @@ int main() {
             // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
             
+            // Render Player (if not 1st person)
+            if (camera.getViewMode() != CameraViewMode::FIRST_PERSON) {
+                playerShader.use();
+                playerShader.setMat4("view", camera.viewMatrix());
+                playerShader.setMat4("projection", camera.projectionMatrix());
+                playerShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+                playerShader.setInt("enableShaders", Config::enableShaders ? 1 : 0);
+                playerShader.setInt("enableShadows", Config::enableShadows ? 1 : 0);
+                playerShader.setVec3("lightColor", lightColor);
+                playerShader.setVec3("skyColor", skyColor);
+                playerShader.setVec3("lightDir", shaderLightDir);
+                playerShader.setFloat("shadowIntensity", Config::shadowIntensity);
+                
+                playerShader.setInt("playerTexture", 0);
+                playerShader.setInt("shadowMap", 1);
+                
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, depthMap);
+                
+                playerRenderer.render(camera, timeVal, camera.getVelocity(), false, playerShader.id());
+            }
+
             // Cloud Rendering Pass
             if (Config::enableClouds && Config::enableShaders) {
                 glDepthMask(GL_FALSE); // Don't write to depth buffer

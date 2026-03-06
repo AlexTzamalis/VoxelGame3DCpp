@@ -68,6 +68,7 @@ add_executable(VoxelGame3D
     src/renderer/Camera.cpp
     src/renderer/Texture.cpp
     src/renderer/TextureAtlas.cpp
+    src/renderer/PlayerRenderer.cpp
     src/world/Chunk.cpp
     src/world/ChunkManager.cpp
     src/world/WorldManager.cpp

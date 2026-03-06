@@ -13,6 +13,12 @@ struct Frustum {
     Plane planes[6];
 };
 
+enum class CameraViewMode {
+    FIRST_PERSON,
+    THIRD_PERSON_BACK,
+    THIRD_PERSON_FRONT
+};
+
 class Camera {
 public:
     Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f),
@@ -40,6 +46,9 @@ public:
     void setFov(float fov) { fov_ = fov; }
     float getEffectiveFov() const;
     glm::mat4 projectionMatrix() const;
+    
+    // Get combined velocity for animation
+    glm::vec3 getVelocity() const { return physicsVelocity_ + flyVelocity_; }
 
     // Zoom system
     void setZooming(bool zooming) { isZooming_ = zooming; }
@@ -49,6 +58,12 @@ public:
 
     // Sprint FOV boost
     void setSprinting(bool sprinting) { isSprinting_ = sprinting; }
+
+    // Camera View Modes
+    CameraViewMode getViewMode() const { return viewMode_; }
+    void setViewMode(CameraViewMode mode) { viewMode_ = mode; }
+    void toggleViewMode();
+    glm::vec3 getRenderPosition() const; // The actual viewpoint, potentially offset for 3rd person
 
     void updateFrustum();
     bool isBoxInFrustum(const glm::vec3& min, const glm::vec3& max) const;
@@ -86,5 +101,14 @@ private:
     bool isSprinting_ = false;
     float sprintFovOffset_ = 0.0f; // Current sprint FOV boost (smoothly interpolated)
 
+    // View Mode
+    CameraViewMode viewMode_ = CameraViewMode::FIRST_PERSON;
+    float thirdPersonDistance_ = 4.0f;
+
     Frustum frustum_;
+    
+    // Helper function for checking ray collision (needs to be injected or we can just pass a simple raycast)
+    std::function<float(glm::vec3, glm::vec3, float)> raycastFunc_;
+public:
+    void setRaycastFunc(std::function<float(glm::vec3, glm::vec3, float)> func) { raycastFunc_ = func; }
 };

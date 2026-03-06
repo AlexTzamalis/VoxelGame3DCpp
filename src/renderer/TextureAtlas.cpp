@@ -43,7 +43,7 @@ bool TextureAtlas::build(const std::string& directoryPath) {
     for (const auto& entry : fs::recursive_directory_iterator(path)) {
         if (entry.path().extension() == ".png") {
             std::string relPath = fs::relative(entry.path(), path).string();
-            bool isGui = (relPath.find("gui") != std::string::npos);
+            bool isGui = (relPath.find("gui") != std::string::npos) || (relPath.find("skin") != std::string::npos);
 
             ImageData img;
             img.name = entry.path().stem().string();
