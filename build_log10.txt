@@ -1,7 +1,0 @@
-[1/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/Config.cpp.obj
-[2/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/Camera.cpp.obj
-[3/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/Chunk.cpp.obj
-[4/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/WorldManager.cpp.obj
-[5/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/Main.cpp.obj
-[6/7] Building CXX object CMakeFiles/VoxelGame3D.dir/src/ChunkManager.cpp.obj
-[7/7] Linking CXX executable VoxelGame3D.exe
