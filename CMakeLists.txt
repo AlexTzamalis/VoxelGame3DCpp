@@ -1,8 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.16...4.1)
 project(VoxelGame3D LANGUAGES CXX C)
-
-# Allow third-party libraries (GLM, GLEW) to use older CMake minimum versions
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 # Allow deprecation warning for FetchContent_Populate to be suppressed in CMake > 3.28
 if(POLICY CMP0169)
@@ -64,18 +61,20 @@ set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
 
 # Executable
 add_executable(VoxelGame3D
-    src/Main.cpp
-    src/Shader.cpp
-    src/Camera.cpp
-    src/Texture.cpp
-    src/TextureAtlas.cpp
-    src/Chunk.cpp
-    src/ChunkManager.cpp
-    src/Config.cpp
-    src/WorldManager.cpp
-    src/Inventory.cpp
-    src/Biome.cpp
-    src/stb_image_impl.cpp
+    src/core/Main.cpp
+    src/core/Config.cpp
+    src/core/stb_image_impl.cpp
+    src/renderer/Shader.cpp
+    src/renderer/Camera.cpp
+    src/renderer/Texture.cpp
+    src/renderer/TextureAtlas.cpp
+    src/renderer/PlayerRenderer.cpp
+    src/world/Chunk.cpp
+    src/world/ChunkManager.cpp
+    src/world/WorldManager.cpp
+    src/world/Biome.cpp
+    src/game/Inventory.cpp
+    src/game/InputManager.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -86,7 +85,7 @@ add_executable(VoxelGame3D
 )
 
 target_include_directories(VoxelGame3D PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${glm_SOURCE_DIR}
     ${glew_SOURCE_DIR}/include
     ${stb_SOURCE_DIR}
@@ -99,6 +98,11 @@ target_link_libraries(VoxelGame3D PRIVATE
     glew_s
     OpenGL::GL
 )
+
+# Statically link MinGW runtime (libstdc++, libgcc, libwinpthread) so no DLLs are needed
+if(MINGW)
+    target_link_options(VoxelGame3D PRIVATE -static-libgcc -static-libstdc++ -static -lpthread)
+endif()
 
 # Copy assets and shaders to build dir so paths work when running from build
 add_custom_command(

@@ -1,0 +1,1134 @@
+#include "renderer/Camera.hpp"
+#include "renderer/Shader.hpp"
+#include "renderer/Texture.hpp"
+#include "renderer/TextureAtlas.hpp"
+#include "renderer/PlayerRenderer.hpp"
+#include "world/ChunkManager.hpp"
+#include "core/Config.hpp"
+#include "world/WorldManager.hpp"
+#include "game/Inventory.hpp"
+#include "game/InputManager.hpp"
+#include <GL/glew.h>
+#include <algorithm>
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <iostream>
+#include <cmath>
+#include <thread>
+#include <chrono>
+#include <sstream>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
+namespace {
+    float deltaTime = 0.0f;
+    float lastFrame = 0.0f;
+    float lastX = Config::windowWidth / 2.0f;
+    float lastY = Config::windowHeight / 2.0f;
+    bool firstMouse = true;
+
+    Camera camera(glm::vec3(0.0f, 120.0f, 5.0f));
+    ChunkManager* globalChunkManager = nullptr;
+    Inventory playerInventory;
+
+    bool raycast(glm::vec3 start, glm::vec3 direction, float maxDistance, glm::ivec3& hitPos, glm::ivec3& prevPos) {
+        // Fast Voxel Traversal (DDA) Algorithm by Amanatides & Woo
+        int stepX = (direction.x > 0) ? 1 : ((direction.x < 0) ? -1 : 0);
+        int stepY = (direction.y > 0) ? 1 : ((direction.y < 0) ? -1 : 0);
+        int stepZ = (direction.z > 0) ? 1 : ((direction.z < 0) ? -1 : 0);
+
+        glm::vec3 tDelta(
+            (stepX != 0) ? std::abs(1.0f / direction.x) : std::numeric_limits<float>::infinity(),
+            (stepY != 0) ? std::abs(1.0f / direction.y) : std::numeric_limits<float>::infinity(),
+            (stepZ != 0) ? std::abs(1.0f / direction.z) : std::numeric_limits<float>::infinity()
+        );
+
+        glm::ivec3 voxel(std::floor(start.x), std::floor(start.y), std::floor(start.z));
+        
+        glm::vec3 tMax(
+            (stepX > 0) ? (voxel.x + 1.0f - start.x) * tDelta.x : (start.x - voxel.x) * tDelta.x,
+            (stepY > 0) ? (voxel.y + 1.0f - start.y) * tDelta.y : (start.y - voxel.y) * tDelta.y,
+            (stepZ > 0) ? (voxel.z + 1.0f - start.z) * tDelta.z : (start.z - voxel.z) * tDelta.z
+        );
+
+        int lastStepAxis = 0; // 0=X, 1=Y, 2=Z
+        
+        for (int i = 0; i < maxDistance * 3.0f; ++i) { // Bound to prevent infinite loops when pointing to void
+            uint8_t currentBlock = globalChunkManager->getVoxelGlobal(voxel.x, voxel.y, voxel.z);
+            if (currentBlock > 1 && currentBlock != 5) { // Stop at solid surfaces
+                hitPos = voxel;
+                prevPos = voxel;
+                if (lastStepAxis == 0) prevPos.x -= stepX;
+                else if (lastStepAxis == 1) prevPos.y -= stepY;
+                else /* 2 */ prevPos.z -= stepZ;
+                return true;
+            }
+
+            if (tMax.x < tMax.y) {
+                if (tMax.x < tMax.z) {
+                    voxel.x += stepX;
+                    if (tMax.x > maxDistance) return false;
+                    tMax.x += tDelta.x;
+                    lastStepAxis = 0;
+                } else {
+                    voxel.z += stepZ;
+                    if (tMax.z > maxDistance) return false;
+                    tMax.z += tDelta.z;
+                    lastStepAxis = 2;
+                }
+            } else {
+                if (tMax.y < tMax.z) {
+                    voxel.y += stepY;
+                    if (tMax.y > maxDistance) return false;
+                    tMax.y += tDelta.y;
+                    lastStepAxis = 1;
+                } else {
+                    voxel.z += stepZ;
+                    if (tMax.z > maxDistance) return false;
+                    tMax.z += tDelta.z;
+                    lastStepAxis = 2;
+                }
+            }
+        }
+        return false;
+    }
+
+    bool isIntersectingPlayer(glm::vec3 playerPos, glm::ivec3 blockPos) {
+        float eyeOffsetY = 1.62f;
+        glm::vec3 playerFeet = playerPos;
+        playerFeet.y -= eyeOffsetY;
+        
+        float px1 = playerFeet.x - 0.3f; float px2 = playerFeet.x + 0.3f;
+        float py1 = playerFeet.y;        float py2 = playerFeet.y + 1.8f;
+        float pz1 = playerFeet.z - 0.3f; float pz2 = playerFeet.z + 0.3f;
+
+        float bx1 = blockPos.x; float bx2 = blockPos.x + 1.0f;
+        float by1 = blockPos.y; float by2 = blockPos.y + 1.0f;
+        float bz1 = blockPos.z; float bz2 = blockPos.z + 1.0f;
+
+        return (px1 < bx2 && px2 > bx1) &&
+               (py1 < by2 && py2 > by1) &&
+               (pz1 < bz2 && pz2 > bz1);
+    }
+
+    void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+        if (Config::currentState != GameState::PLAYING) return;
+        
+        if (action == GLFW_PRESS && globalChunkManager != nullptr) {
+            glm::ivec3 hitPos, prevPos;
+            if (raycast(camera.position(), camera.front(), 8.0f, hitPos, prevPos)) {
+                if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                    globalChunkManager->setVoxelGlobal(hitPos.x, hitPos.y, hitPos.z, 1); // Delete (Set Air)
+                } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                    uint8_t holding = playerInventory.getSelectedBlock();
+                    if (holding != 0) {
+                        if (!isIntersectingPlayer(camera.position(), prevPos)) {
+                            globalChunkManager->setVoxelGlobal(prevPos.x, prevPos.y, prevPos.z, holding); // Place
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+        glViewport(0, 0, width, height);
+        Config::windowWidth = width;
+        Config::windowHeight = height;
+        camera.setAspect(static_cast<float>(width) / static_cast<float>(height));
+    }
+
+    void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+        if (Config::currentState != GameState::PLAYING) return;
+        
+        // If zooming, scroll adjusts zoom level instead of hotbar
+        if (camera.isZooming()) {
+            camera.adjustZoom(static_cast<float>(yoffset));
+            return;
+        }
+        
+        // Otherwise, scroll changes hotbar selection
+        int current = playerInventory.selectedHotbarIndex;
+        current -= static_cast<int>(yoffset); // scroll up = previous slot
+        if (current < 0) current = 8;
+        if (current > 8) current = 0;
+        playerInventory.setSelectedHotbar(current);
+    }
+
+    void processInput(GLFWwindow* window) {
+        if (Config::currentState != GameState::PLAYING) return;
+
+        float speed = Config::playerSpeed;
+        
+        // Sprint: L-Ctrl by default — makes you run/fly faster + FOV boost
+        bool sprinting = InputManager::isPressed(InputAction::SPRINT, window);
+        if (sprinting) {
+            speed = Config::playerSprintSpeed;
+            // Extra boost when flying
+            if (Config::currentMode != GameMode::SURVIVAL) speed *= 2.0f;
+        }
+        camera.setSprinting(sprinting);
+
+        // Zoom toggle (hold key)
+        camera.setZooming(InputManager::isPressed(InputAction::ZOOM, window));
+
+        // Horizontal movement always uses horizon-aligned front (XZ plane)
+        // This prevents the camera pitch from affecting walk/fly speed
+        glm::vec3 moveFront = glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z));
+
+        if (InputManager::isPressed(InputAction::MOVE_FORWARD, window))
+            camera.addVelocity(moveFront * speed);
+        if (InputManager::isPressed(InputAction::MOVE_BACK, window))
+            camera.addVelocity(-moveFront * speed);
+        if (InputManager::isPressed(InputAction::MOVE_LEFT, window))
+            camera.addVelocity(-camera.right() * speed);
+        if (InputManager::isPressed(InputAction::MOVE_RIGHT, window))
+            camera.addVelocity(camera.right() * speed);
+            
+        if (Config::currentMode != GameMode::SURVIVAL) {
+            // Flying: Space = up, Shift = down (Minecraft creative controls)
+            if (InputManager::isPressed(InputAction::JUMP, window)) camera.addVelocity(glm::vec3(0.0f, speed, 0.0f));
+            if (InputManager::isPressed(InputAction::DESCEND, window)) camera.addVelocity(glm::vec3(0.0f, -speed, 0.0f));
+        } else {
+            if (InputManager::isPressed(InputAction::JUMP, window)) camera.jump(8.8f);
+        }
+        
+        // GameMode Hotkey Handlers
+        static bool f1Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS) {
+            if (!f1Pressed) { 
+                Config::currentMode = (Config::currentMode == GameMode::SPECTATOR) ? GameMode::CREATIVE : GameMode::SPECTATOR; 
+                f1Pressed = true; 
+            }
+        } else { f1Pressed = false; }
+        
+        static bool f2Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS) {
+            if (!f2Pressed) { Config::currentMode = GameMode::CREATIVE; f2Pressed = true; }
+        } else { f2Pressed = false; }
+        
+        static bool f3Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS) {
+            if (!f3Pressed) { Config::currentMode = GameMode::SURVIVAL; f3Pressed = true; }
+        } else { f3Pressed = false; }
+
+        static bool f5Pressed = false;
+        if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS) {
+            if (!f5Pressed) { camera.toggleViewMode(); f5Pressed = true; }
+        } else { f5Pressed = false; }
+
+        // Hotbar selection via number keys
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) playerInventory.setSelectedHotbar(0);
+        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) playerInventory.setSelectedHotbar(1);
+        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) playerInventory.setSelectedHotbar(2);
+        if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) playerInventory.setSelectedHotbar(3);
+        if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) playerInventory.setSelectedHotbar(4);
+        if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS) playerInventory.setSelectedHotbar(5);
+        if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) playerInventory.setSelectedHotbar(6);
+        if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) playerInventory.setSelectedHotbar(7);
+        if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) playerInventory.setSelectedHotbar(8);
+
+        // Open Inventory
+        if (InputManager::wasJustPressed(InputAction::INVENTORY, window)) {
+            playerInventory.isVisible = !playerInventory.isVisible;
+            if (playerInventory.isVisible) {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            } else {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+        }
+    }
+
+    void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+        if (Config::currentState != GameState::PLAYING) return;
+        
+        if (firstMouse) {
+            lastX = static_cast<float>(xpos);
+            lastY = static_cast<float>(ypos);
+            firstMouse = false;
+        }
+        float dx = static_cast<float>(xpos) - lastX;
+        float dy = lastY - static_cast<float>(ypos);
+        lastX = static_cast<float>(xpos);
+        lastY = static_cast<float>(ypos);
+        if (playerInventory.isVisible) return; // Freeze view if managing inventory!
+        
+        camera.rotate(dx * Config::mouseSensitivity, dy * Config::mouseSensitivity);
+    }
+}
+
+int main() {
+    InputManager::init();
+    WorldManager::init();
+    Config::load(); // Load global user settings on start!
+
+    if (!glfwInit()) {
+        std::cerr << "Failed to init GLFW\n";
+        return -1;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    GLFWwindow* window = glfwCreateWindow(Config::windowWidth, Config::windowHeight, "Voxel Game 3D", nullptr, nullptr);
+    if (!window) {
+        std::cerr << "Failed to create GLFW window\n";
+        glfwTerminate();
+        return -1;
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+    glfwSetCursorPosCallback(window, mouseCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetScrollCallback(window, scrollCallback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+    // Disable raw driver VSync so we can process and sleep strictly mathematically below
+    glfwSwapInterval(0); 
+
+    if (glewInit() != GLEW_OK) {
+        std::cerr << "Failed to init GLEW\n";
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+    
+    // ImGui Initialization
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330 core");
+
+    Shader shader("shaders/basic.vert", "shaders/basic.frag");
+    Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
+    Shader cloudShader("shaders/cloud.vert", "shaders/cloud.frag");
+    Shader playerShader("shaders/player.vert", "shaders/player.frag");
+    
+    PlayerRenderer playerRenderer;
+    playerRenderer.init();
+    
+    // Fullscreen quad for cloud rendering
+    float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
+    unsigned int cloudVAO, cloudVBO;
+    glGenVertexArrays(1, &cloudVAO);
+    glGenBuffers(1, &cloudVBO);
+    glBindVertexArray(cloudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cloudVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    
+    // --- Set up Shadow Map FBO ---
+    unsigned int shadowTexSize = 2048; // Will be recreated if config changes
+    const unsigned int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
+    unsigned int depthMapFBO;
+    glGenFramebuffers(1, &depthMapFBO);
+    
+    unsigned int depthMap;
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // Prevents black shadowing from repeating outside the light frustum
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (shader.id() == 0 || shadowShader.id() == 0) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
+        std::cerr << "Dynamic Texture Pack loading failed! Ensure default.zip exists in assets/texture_packs/\n";
+    }
+
+    ChunkManager chunkManager;
+    globalChunkManager = &chunkManager;
+
+    camera.setRaycastFunc([](glm::vec3 start, glm::vec3 dir, float maxDist) -> float {
+        glm::ivec3 hitPos, prevPos;
+        if (raycast(start, dir, maxDist, hitPos, prevPos)) {
+            // Found a solid block. Return the distance to the intersection boundary.
+            // A simple approximation is the distance to the center of the block minus ~0.5.
+            return glm::distance(start, glm::vec3(hitPos) + glm::vec3(0.5f)) - 0.5f;
+        }
+        return -1.0f; // No hit
+    });
+
+    camera.setAspect(static_cast<float>(Config::windowWidth) / static_cast<float>(Config::windowHeight));
+    camera.setFov(Config::cameraFov);
+
+    while (!glfwWindowShouldClose(window)) {
+        float currentFrame = static_cast<float>(glfwGetTime());
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
+        // Global State Toggles (ESCAPE key)
+        static bool escapePressed = false;
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            if (!escapePressed) {
+                if (Config::currentState == GameState::PLAYING) {
+                    Config::currentState = GameState::PAUSED;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                } else if (Config::currentState == GameState::PAUSED) {
+                    Config::currentState = GameState::PLAYING;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                } else if (Config::currentState == GameState::COMMAND_INPUT) {
+                    Config::currentState = GameState::PLAYING;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                }
+                escapePressed = true;
+            }
+        } else {
+            escapePressed = false;
+        }
+
+        // Command System Input (configurable key)
+        if (InputManager::wasJustPressed(InputAction::COMMAND, window)) {
+            if (Config::currentState == GameState::PLAYING && !playerInventory.isVisible) {
+                Config::currentState = GameState::COMMAND_INPUT;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+        }
+
+        processInput(window);
+        
+        // Start the Dear ImGui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        
+        if (Config::currentState == GameState::PLAYING) {
+            chunkManager.update(camera.position());
+        }
+
+        if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED || Config::currentState == GameState::COMMAND_INPUT) {
+            // Day-Night Cycle calculations
+            float timeVal = static_cast<float>(glfwGetTime());
+            float dayPhase = timeVal * Config::dayTimeSpeed;
+            
+            // Vector pointing TOWARDS the sun - GLOBAL axis, not relative to player
+            glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.3f));
+            float sunHeight = sunDir.y;
+
+            glm::vec3 daySky(0.47f, 0.65f, 1.0f);
+            glm::vec3 nightSky(0.01f, 0.02f, 0.05f); // Deep Space Blue
+            glm::vec3 sunsetSky(0.9f, 0.4f, 0.3f);   // Vibrant Orange
+            
+            glm::vec3 skyColor;
+            if (sunHeight > 0.2f) skyColor = daySky;
+            else if (sunHeight > 0.0f) skyColor = glm::mix(sunsetSky, daySky, sunHeight / 0.2f);
+            else if (sunHeight > -0.2f) skyColor = glm::mix(nightSky, sunsetSky, (sunHeight + 0.2f) / 0.2f);
+            else skyColor = nightSky;
+
+            glm::vec3 lightColor;
+            if (sunHeight > 0.2f) lightColor = glm::vec3(1.2f, 1.1f, 1.0f); // Bright Midday
+            else if (sunHeight > 0.0f) lightColor = glm::mix(glm::vec3(1.2f, 0.5f, 0.2f), glm::vec3(1.2f, 1.1f, 1.0f), sunHeight / 0.2f); // Golden Hour
+            else lightColor = glm::vec3(0.1f, 0.12f, 0.2f) + glm::vec3(Config::ambientBrightness * 0.3f); // Moonlight + ambient boost
+
+            // Use the moon as the light source effectively if the sun is down
+            glm::vec3 shaderLightDir = sunHeight > 0.0f ? sunDir : glm::vec3(-sunDir.x, -sunDir.y, -sunDir.z); 
+
+            // Detect if camera is physically touching water
+            int camX = std::floor(camera.position().x);
+            int camY = std::floor(camera.position().y);
+            int camZ = std::floor(camera.position().z);
+            bool isUnderwater = (chunkManager.getVoxelGlobal(camX, camY, camZ) == 5);
+
+            if (isUnderwater && Config::enableShaders) {
+                skyColor = glm::vec3(0.04f, 0.12f, 0.35f); // Instant deep oceanic blue skybox
+            }
+
+            // PASS 1: SHADOW MAP RENDERING
+            float shadowDist = std::min(Config::renderDistance * 16.0f, 256.0f); // Cap shadow distance  
+            glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
+            
+            // Shadow light target follows camera smoothly
+            glm::vec3 lightTarget = camera.position();
+            glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
+            
+            glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+            
+            // TEXEL SNAPPING: Prevents shadow flickering/shimmer when camera moves
+            // Snap the shadow map origin to texel boundaries so shadows don't shift sub-pixel
+            {
+                glm::vec4 shadowOrigin = lightSpaceMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                shadowOrigin *= SHADOW_WIDTH / 2.0f;
+                glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+                glm::vec4 roundOffset = roundedOrigin - shadowOrigin;
+                roundOffset /= SHADOW_WIDTH / 2.0f;
+                lightProjection[3][0] += roundOffset.x;
+                lightProjection[3][1] += roundOffset.y;
+                lightSpaceMatrix = lightProjection * lightView;
+            }
+
+            if (Config::enableShadows && Config::enableShaders) {
+                glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+                glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+                glClear(GL_DEPTH_BUFFER_BIT); // Depth buffer only
+                
+                shadowShader.use();
+                shadowShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+                shadowShader.setFloat("time", timeVal);
+                
+                glActiveTexture(GL_TEXTURE0);
+                TextureAtlas::bind(0);
+                shadowShader.setInt("textureAtlas", 0);
+                
+                // Bypass frustum checks entirely so chunks behind the camera cast shadows into frame,
+                // but heavily cull chunks outside the shadow texture bounds so we don't destroy CPU limit!
+                chunkManager.render(shadowShader.id(), camera, true, shadowDist * 1.5f);
+            }
+            
+            // PASS 2: NORMAL RENDERING
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            int fbW, fbH;
+            glfwGetFramebufferSize(window, &fbW, &fbH);
+            glViewport(0, 0, fbW, fbH);
+
+            glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            shader.use();
+            
+            shader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            shader.setInt("enableShaders", Config::enableShaders ? 1 : 0);
+            shader.setInt("enableShadows", Config::enableShadows ? 1 : 0);
+            
+            shader.setMat4("view", camera.viewMatrix());
+            shader.setMat4("projection", camera.projectionMatrix());
+            
+            shader.setFloat("time", timeVal);
+            shader.setInt("isUnderwater", isUnderwater ? 1 : 0);
+            shader.setVec3("cameraPos", camera.position());
+            shader.setVec3("skyColor", skyColor);
+            
+            // Granular shader uniforms
+            shader.setFloat("shadowIntensity", Config::shadowIntensity);
+            shader.setInt("enableFog", Config::enableFog ? 1 : 0);
+            shader.setInt("enableFaceShading", Config::enableDirectionalFaceShading ? 1 : 0);
+            shader.setFloat("ambientBrightness", Config::ambientBrightness);
+            shader.setInt("waterMode", Config::waterMode);
+            shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
+            shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
+            shader.setFloat("saturation", Config::saturation);
+            shader.setFloat("contrast", Config::contrast);
+            
+            // Render Fog Distances
+            float renderDistBlocks = Config::renderDistance * 16.0f;
+            if (isUnderwater) {
+                shader.setFloat("fogStart", 0.0f);
+                shader.setFloat("fogEnd", 24.0f); // Quick fade when exploring oceans
+            } else {
+                shader.setFloat("fogStart", renderDistBlocks - 32.0f); // Minimalistic chunk-loading fog on the X-Z border
+                shader.setFloat("fogEnd", renderDistBlocks);
+            }
+
+            shader.setVec3("lightDir", shaderLightDir);
+            shader.setVec3("lightColor", lightColor);
+            
+            glActiveTexture(GL_TEXTURE0);
+            TextureAtlas::bind(0);
+            shader.setInt("textureAtlas", 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap);
+            shader.setInt("shadowMap", 1);
+            
+            if (Config::currentState == GameState::PLAYING) {
+                // Determine if chunk we are inside is fully generated
+                int cx = std::floor(camera.position().x / Chunk::CHUNK_SIZE);
+                int cz = std::floor(camera.position().z / Chunk::CHUNK_SIZE);
+                
+                bool isLoaded = chunkManager.isChunkColumnLoaded(cx, cz);
+                if (isLoaded || camera.position().y > 80.0f) { // Added height bypass to not get stuck above generation!
+                    // Safe to apply gravity and collision sweeps without sinking into void
+                    auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
+                        int startX = std::floor(minB.x + 0.01f);
+                        int endX   = std::floor(maxB.x - 0.01f);
+                        int startY = std::floor(minB.y + 0.01f);
+                        int endY   = std::floor(maxB.y - 0.01f);
+                        int startZ = std::floor(minB.z + 0.01f);
+                        int endZ   = std::floor(maxB.z - 0.01f);
+                        
+                        for (int x = startX; x <= endX; x++) {
+                            for (int y = startY; y <= endY; y++) {
+                                for (int z = startZ; z <= endZ; z++) {
+                                    uint8_t voxel = globalChunkManager->getVoxelGlobal(x, y, z);
+                                    if (voxel > 1 && voxel != 5) return true; // Solid collision check
+                                }
+                            }
+                        }
+                        return false;
+                    };
+                    camera.applyPhysics(deltaTime, checkCollisionCall);
+                }
+
+                // Update the Frustum boundary definitions based on currently moving camera coordinates
+                camera.updateFrustum();
+            }
+
+            // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
+            chunkManager.render(shader.id(), camera);
+            
+            // Render Player (if not 1st person)
+            if (camera.getViewMode() != CameraViewMode::FIRST_PERSON) {
+                playerShader.use();
+                playerShader.setMat4("view", camera.viewMatrix());
+                playerShader.setMat4("projection", camera.projectionMatrix());
+                playerShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+                playerShader.setInt("enableShaders", Config::enableShaders ? 1 : 0);
+                playerShader.setInt("enableShadows", Config::enableShadows ? 1 : 0);
+                playerShader.setVec3("lightColor", lightColor);
+                playerShader.setVec3("skyColor", skyColor);
+                playerShader.setVec3("lightDir", shaderLightDir);
+                playerShader.setFloat("shadowIntensity", Config::shadowIntensity);
+                
+                playerShader.setInt("playerTexture", 0);
+                playerShader.setInt("shadowMap", 1);
+                
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, depthMap);
+                
+                playerRenderer.render(camera, timeVal, camera.getVelocity(), false, playerShader.id());
+            }
+
+            // Cloud Rendering Pass
+            if (Config::enableClouds && Config::enableShaders) {
+                glDepthMask(GL_FALSE); // Don't write to depth buffer
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                
+                cloudShader.use();
+                glm::mat4 invViewProj = glm::inverse(camera.projectionMatrix() * camera.viewMatrix());
+                cloudShader.setMat4("invViewProj", invViewProj);
+                cloudShader.setVec3("cameraPos", camera.position());
+                cloudShader.setVec3("lightDir", shaderLightDir);
+                cloudShader.setVec3("lightColor", lightColor);
+                cloudShader.setVec3("skyColor", skyColor);
+                cloudShader.setFloat("time", timeVal);
+                cloudShader.setFloat("cloudHeight", Config::cloudHeight);
+                cloudShader.setFloat("cloudScale", Config::cloudScale);
+                cloudShader.setFloat("cloudSpeed", Config::cloudSpeed);
+                
+                glBindVertexArray(cloudVAO);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                
+                glDepthMask(GL_TRUE);
+            }
+        } else {
+            // Main Menu / Background Canvas (Dirt Brown color)
+            glClearColor(0.12f, 0.09f, 0.07f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+
+        // Draw Player Live UI Overlay inside playing mode loop
+        if (Config::currentState == GameState::PLAYING) {
+            
+            // FPS Counter: updates once per second for readability
+            static float fpsTimer = 0.0f;
+            static float displayFps = 0.0f;
+            static float avgFps = 0.0f;
+            static int frameCount = 0;
+            static float fpsAccum = 0.0f;
+            
+            frameCount++;
+            fpsAccum += 1.0f / deltaTime;
+            fpsTimer += deltaTime;
+            if (fpsTimer >= 1.0f) {
+                displayFps = 1.0f / deltaTime;
+                avgFps = fpsAccum / frameCount;
+                fpsTimer = 0.0f;
+                frameCount = 0;
+                fpsAccum = 0.0f;
+            }
+            
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.4f);
+            ImGui::Begin("Debug_Overlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "FPS: %.0f", displayFps);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Avg: %.0f", avgFps);
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "XYZ: %.1f / %.1f / %.1f", 
+                camera.position().x, camera.position().y, camera.position().z);
+            ImGui::End();
+
+            // perfectly centered mathematical Crosshair
+            ImDrawList* bgDrawList = ImGui::GetBackgroundDrawList();
+            ImVec2 center(Config::windowWidth * 0.5f, Config::windowHeight * 0.5f);
+            float crosshairSize = 10.0f;
+            bgDrawList->AddLine(ImVec2(center.x - crosshairSize, center.y), ImVec2(center.x + crosshairSize, center.y), IM_COL32(255, 255, 255, 200), 2.0f);
+            bgDrawList->AddLine(ImVec2(center.x, center.y - crosshairSize), ImVec2(center.x, center.y + crosshairSize), IM_COL32(255, 255, 255, 200), 2.0f);
+
+            // Custom Texture-based Hotbar Rendering
+            float hotbarW = 182.0f * 2.5f; 
+            float hotbarH = 22.0f * 2.5f;
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - hotbarW / 2.0f, Config::windowHeight - hotbarH - 20.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(hotbarW, hotbarH), ImGuiCond_Always);
+            ImGui::Begin("Hotbar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+            
+            unsigned int hotbarTex = TextureAtlas::getGuiTexture("hotbar");
+            unsigned int selectTex = TextureAtlas::getGuiTexture("hotbar_selection");
+            
+            if (hotbarTex) {
+                ImGui::GetWindowDrawList()->AddImage((void*)(uintptr_t)hotbarTex, ImGui::GetWindowPos(), 
+                    ImVec2(ImGui::GetWindowPos().x + hotbarW, ImGui::GetWindowPos().y + hotbarH));
+            }
+
+            for (int i = 0; i < 9; ++i) {
+                float slotX = ImGui::GetWindowPos().x + (i * 20.0f * 2.5f) + 1 * 2.5f;
+                float slotY = ImGui::GetWindowPos().y + 1 * 2.5f;
+                float slotSize = 20.0f * 2.5f;
+
+                if (playerInventory.selectedHotbarIndex == i && selectTex) {
+                    ImGui::GetWindowDrawList()->AddImage((void*)(uintptr_t)selectTex, ImVec2(slotX - 2 * 2.5f, slotY - 2 * 2.5f), 
+                        ImVec2(slotX + slotSize + 2 * 2.5f, slotY + slotSize + 2 * 2.5f));
+                }
+
+                uint8_t item = playerInventory.slots[i].itemID;
+                if (item > 1) {
+                    // Draw block icon (using atlas UV)
+                    float uvIdx = TextureAtlas::getUVForBlock(item, 4); // Side face icon
+                    float atlasId = TextureAtlas::getTextureID();
+                    // Since it's an array, ImGui can't easily draw it without a custom shader, 
+                    // but we can use a placeholder for now or just text.
+                    ImGui::SetCursorScreenPos(ImVec2(slotX + 5, slotY + 5));
+                    ImGui::Text("%d", item);
+                }
+            }
+            ImGui::End();
+
+            // Custom Inventory Modal
+            if (playerInventory.isVisible) {
+                ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(500, 300), ImGuiCond_Always);
+                ImGui::Begin("Inventory", &playerInventory.isVisible, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+                
+                ImGui::Text("Creative Inventory");
+                ImGui::Separator();
+                
+                for (int slot = 0; slot < 36; ++slot) {
+                    if (slot % 9 != 0) ImGui::SameLine();
+                    
+                    uint8_t item = playerInventory.slots[slot].itemID;
+                    std::string lbl = std::to_string(item) + "##inv" + std::to_string(slot);
+                    if (item == 0) lbl = " ##inv" + std::to_string(slot);
+                    
+                    if (ImGui::Button(lbl.c_str(), ImVec2(48, 48))) {
+                        if (slot < 9) playerInventory.setSelectedHotbar(slot);
+                    }
+                }
+                
+                ImGui::End();
+                
+                if (!playerInventory.isVisible) {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                }
+            }
+        }
+
+        // GUI Rendering
+        if (Config::currentState == GameState::MAIN_MENU) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 240), ImGuiCond_Always);
+            ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            if (ImGui::Button("Singleplayer", ImVec2(280, 40))) {
+                Config::currentState = GameState::WORLD_SELECT;
+            }
+            if (ImGui::Button("Settings", ImVec2(280, 40))) {
+                Config::currentState = GameState::SETTINGS;
+            }
+            ImGui::Separator();
+            if (ImGui::Button("Quit Game", ImVec2(280, 40))) {
+                Config::save();
+                glfwSetWindowShouldClose(window, true);
+            }
+            ImGui::End();
+        } 
+        else if (Config::currentState == GameState::WORLD_SELECT) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Always);
+            ImGui::Begin("Select World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            auto worlds = WorldManager::getSavedWorlds();
+            
+            ImGui::BeginChild("WorldList", ImVec2(0, 280), true);
+            if (worlds.empty()) {
+                ImGui::TextDisabled("No worlds found. Create a new one!");
+            } else {
+                for (const auto& w : worlds) {
+                    if (ImGui::TreeNodeEx(w.displayName.c_str(), ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
+                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Mode: %d | Type: %d | Time Played: %llds", (int)w.mode, w.worldType, w.timePlayedSeconds);
+                        ImGui::SameLine(ImGui::GetWindowWidth() - 100);
+                        
+                        std::string playLabel = "Play##" + w.folderName;
+                        if (ImGui::Button(playLabel.c_str(), ImVec2(80, 25))) {
+                            chunkManager.clear();
+                            WorldManager::loadWorld(w.folderName);
+                            
+                            glm::vec3 savedPos; float pitch, yaw;
+                            if (WorldManager::loadPlayer(savedPos, pitch, yaw)) {
+                                camera.setPosition(savedPos);
+                                camera.setPitch(pitch);
+                                camera.setYaw(yaw);
+                                camera.updateVectors();
+                            } else {
+                                camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); 
+                            }
+                            
+                            Config::currentState = GameState::PLAYING;
+                            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                            firstMouse = true;
+                        }
+                    }
+                }
+            }
+            ImGui::EndChild();
+            
+            if (ImGui::Button("Create New World", ImVec2(230, 40))) {
+                Config::currentState = GameState::CREATE_WORLD;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Back to Menu", ImVec2(230, 40))) {
+                Config::currentState = GameState::MAIN_MENU;
+            }
+            ImGui::End();
+        }
+        else if (Config::currentState == GameState::CREATE_WORLD) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 180), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400, 340), ImGuiCond_Always);
+            ImGui::Begin("Create New World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            static char worldName[64] = "My Beautiful World";
+            ImGui::InputText("World Name", worldName, IM_ARRAYSIZE(worldName));
+            
+            static int seed = 1337;
+            ImGui::InputInt("Seed", &seed);
+            
+            static int selectedMode = 1; // 0: Survival, 1: Creative, 2: Spectator
+            ImGui::Combo("Game Mode", &selectedMode, "Survival\0Creative\0Spectator\0");
+            
+            static int selectedTerrain = 0; // 0: Default, 1: Flat, 2: Skyblock
+            ImGui::Combo("Terrain Type", &selectedTerrain, "Default\0Flat World\0Skyblock\0");
+            
+            ImGui::Separator();
+            
+            if (ImGui::Button("Create & Play!", ImVec2(380, 40))) {
+                auto newMode = (selectedMode == 0) ? GameMode::SURVIVAL : ((selectedMode == 1) ? GameMode::CREATIVE : GameMode::SPECTATOR);
+                
+                WorldMetadata newMeta;
+                newMeta.displayName = std::string(worldName);
+                if (newMeta.displayName.empty()) newMeta.displayName = "Unnamed_World";
+                
+                // Keep file names path safe
+                newMeta.folderName = newMeta.displayName; 
+                std::replace(newMeta.folderName.begin(), newMeta.folderName.end(), ' ', '_'); 
+                newMeta.folderName += "_" + std::to_string(std::abs(seed));
+                
+                newMeta.seed = seed;
+                newMeta.mode = newMode;
+                newMeta.worldType = selectedTerrain;
+                newMeta.creationDate = getCurrentTimeMs();
+                newMeta.lastPlayed = getCurrentTimeMs();
+                newMeta.timePlayedSeconds = 0;
+                
+                WorldManager::createWorld(newMeta);
+                
+                // Clear any chunks from previously playing!
+                chunkManager.clear();
+                WorldManager::loadWorld(newMeta.folderName);
+                
+                glm::vec3 savedPos; float pitch, yaw;
+                if (WorldManager::loadPlayer(savedPos, pitch, yaw)) {
+                    camera.setPosition(savedPos);
+                    camera.setPitch(pitch);
+                    camera.setYaw(yaw);
+                    camera.updateVectors();
+                } else {
+                    camera.setPosition(glm::vec3(0.0f, 120.0f, 5.0f)); // Initial spawn location (Falling safely)
+                }
+                
+                WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
+                
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            if (ImGui::Button("Cancel", ImVec2(380, 40))) {
+                Config::currentState = GameState::WORLD_SELECT;
+            }
+            ImGui::End();
+        }
+        else if (Config::currentState == GameState::SETTINGS) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 300, 40), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(600, Config::windowHeight - 80.0f), ImGuiCond_Always);
+            ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            
+            if (ImGui::BeginTabBar("SettingsTabs")) {
+                if (ImGui::BeginTabItem("Video")) {
+                    ImGui::Spacing();
+                    ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
+                    ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
+                    ImGui::SliderInt("Max FPS (0=Unlimited)", &Config::fpsCap, 0, 500);
+                    ImGui::Checkbox("VSync", &Config::vsync);
+                    if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
+                        camera.setFov(Config::cameraFov);
+                    }
+                    ImGui::EndTabItem();
+                }
+                
+                if (ImGui::BeginTabItem("Shaders")) {
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Master");
+                    ImGui::Checkbox("Enable Advanced Shaders", &Config::enableShaders);
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "  ");
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("ULTRA MODE (Photon-like)", &Config::ultraMode)) {
+                        if (Config::ultraMode) {
+                            Config::enableShaders = true;
+                            Config::enableShadows = true;
+                            Config::enableFog = true;
+                            Config::enableDirectionalFaceShading = true;
+                            Config::enableClouds = true;
+                            Config::enableLeafWind = true;
+                            Config::waterMode = 1;
+                        }
+                    }
+                    if (Config::ultraMode) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "All visual features enabled at maximum quality");
+                    }
+                    
+                    ImGui::SeparatorText("Shadows");
+                    if (Config::enableShaders) {
+                        ImGui::Checkbox("Enable Shadows", &Config::enableShadows);
+                        if (Config::enableShadows) {
+                            ImGui::SliderFloat("Shadow Intensity", &Config::shadowIntensity, 0.1f, 1.0f);
+                            ImGui::SliderInt("Shadow Map Size", &Config::shadowMapSize, 512, 4096);
+                        }
+                    } else {
+                        ImGui::BeginDisabled();
+                        bool f = false; ImGui::Checkbox("Enable Shadows", &f);
+                        ImGui::EndDisabled();
+                    }
+                    
+                    ImGui::SeparatorText("Water");
+                    const char* waterModes[] = { "Basic (Flat)", "Advanced (Waves + Reflections)" };
+                    ImGui::Combo("Water Mode", &Config::waterMode, waterModes, 2);
+                    
+                    ImGui::SeparatorText("Clouds");
+                    ImGui::Checkbox("Enable Clouds", &Config::enableClouds);
+                    if (Config::enableClouds) {
+                        ImGui::SliderFloat("Cloud Height", &Config::cloudHeight, 100.0f, 400.0f);
+                        ImGui::SliderFloat("Cloud Scale", &Config::cloudScale, 0.0003f, 0.003f, "%.4f");
+                        ImGui::SliderFloat("Cloud Speed", &Config::cloudSpeed, 0.01f, 0.5f, "%.3f");
+                    }
+                    
+                    ImGui::SeparatorText("Lighting & Atmosphere");
+                    ImGui::Checkbox("Enable Fog", &Config::enableFog);
+                    ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
+                    ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                    ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
+                    ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
+                    ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
+                    
+                    ImGui::SeparatorText("Day/Night Cycle");
+                    if (ImGui::SliderFloat("Day Speed", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {}
+                    ImGui::TextDisabled("Default: 0.00218 (48min per 24h)");
+                    
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Controls")) {
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Movement");
+                    ImGui::SliderFloat("Player Speed", &Config::playerSpeed, 2.0f, 20.0f);
+                    ImGui::SliderFloat("Sprint Speed", &Config::playerSprintSpeed, 5.0f, 50.0f);
+                    ImGui::SliderFloat("Mouse Sensitivity", &Config::mouseSensitivity, 0.05f, 0.5f);
+                    
+                    ImGui::SeparatorText("Zoom");
+                    ImGui::SliderFloat("Zoom FOV", &Config::zoomBaseFov, 15.0f, 60.0f);
+                    ImGui::TextDisabled("Hold zoom key + scroll wheel to adjust in-game");
+                    
+                    ImGui::SeparatorText("Keybinds");
+                    ImGui::TextDisabled("Click a button, then press a key to rebind");
+                    
+                    static std::string waitingForKey = "";
+                    
+                    auto keybindRow = [&](const char* label, const std::string& action) {
+                        ImGui::Text("%s", label);
+                        ImGui::SameLine(200);
+                        std::string btnLabel;
+                        if (waitingForKey == action) {
+                            btnLabel = "[ Press a key... ]##" + action;
+                        } else {
+                            btnLabel = InputManager::getKeyName(action) + "##" + action;
+                        }
+                        if (ImGui::Button(btnLabel.c_str(), ImVec2(150, 0))) {
+                            waitingForKey = action;
+                        }
+                    };
+                    
+                    keybindRow("Move Forward", InputAction::MOVE_FORWARD);
+                    keybindRow("Move Backward", InputAction::MOVE_BACK);
+                    keybindRow("Move Left", InputAction::MOVE_LEFT);
+                    keybindRow("Move Right", InputAction::MOVE_RIGHT);
+                    keybindRow("Jump / Fly Up", InputAction::JUMP);
+                    keybindRow("Descend", InputAction::DESCEND);
+                    keybindRow("Sprint", InputAction::SPRINT);
+                    keybindRow("Zoom", InputAction::ZOOM);
+                    keybindRow("Inventory", InputAction::INVENTORY);
+                    keybindRow("Command", InputAction::COMMAND);
+                    
+                    // Capture key press for rebinding
+                    if (!waitingForKey.empty()) {
+                        for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; key++) {
+                            if (glfwGetKey(window, key) == GLFW_PRESS) {
+                                InputManager::setKey(waitingForKey, key);
+                                waitingForKey = "";
+                                break;
+                            }
+                        }
+                    }
+                    
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+            
+            ImGui::Separator();
+            if (ImGui::Button("Save & Back", ImVec2(480, 40))) {
+                Config::save();
+                // If we accessed settings while paused, go back to pause menu!
+                if (!firstMouse) Config::currentState = GameState::PAUSED;
+                else Config::currentState = GameState::MAIN_MENU;
+            }
+            ImGui::End();
+        }
+        else if (Config::currentState == GameState::PAUSED) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+            ImGui::Begin("Game Paused", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            if (ImGui::Button("Resume", ImVec2(280, 40))) {
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            if (ImGui::Button("Settings", ImVec2(280, 40))) {
+                Config::currentState = GameState::SETTINGS;
+            }
+            if (ImGui::Button("Save and Quit to Menu", ImVec2(280, 40))) {
+                WorldManager::savePlayer(camera.position(), camera.pitch(), camera.yaw());
+                WorldManager::updatePlayTime();
+                chunkManager.clear(); // Flushes all modified chunks to disk securely!
+                Config::save(); // Persist video/audio settings as well
+                Config::currentState = GameState::MAIN_MENU;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+            ImGui::End();
+        }
+        else if (Config::currentState == GameState::COMMAND_INPUT) {
+            ImGui::SetNextWindowPos(ImVec2(10, Config::windowHeight - 50), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(600, 40), ImGuiCond_Always);
+            ImGui::Begin("Command input", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+            
+            static char cmdBuf[256] = "";
+            if (ImGui::IsWindowAppearing()) {
+                ImGui::SetKeyboardFocusHere();
+                cmdBuf[0] = '/'; 
+                cmdBuf[1] = '\0';
+            }
+            if (ImGui::InputText("##cmd", cmdBuf, IM_ARRAYSIZE(cmdBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                std::string cmdStr(cmdBuf);
+                std::stringstream ss(cmdStr);
+                std::string token;
+                ss >> token;
+                
+                if (token == "/time") {
+                    double newTime;
+                    if (ss >> newTime) {
+                         glfwSetTime(newTime / Config::dayTimeSpeed); // Quick hack to set internal day phase
+                    }
+                } else if (token == "/speed") {
+                    float spd;
+                    if (ss >> spd) {
+                        Config::playerSpeed = spd;
+                        Config::playerSprintSpeed = spd * 1.5f;
+                    }
+                } else if (token == "/teleport") {
+                    float px, py, pz;
+                    if (ss >> px >> py >> pz) {
+                        camera.setPosition(glm::vec3(px, py, pz));
+                    }
+                } else if (token == "/locate") {
+                    std::string entity;
+                    ss >> entity;
+                    std::cout << "Locating " << entity << "..." << "\n";
+                    // Just print coordinate for now as placeholder
+                }
+                
+                cmdBuf[0] = '\0';
+                Config::currentState = GameState::PLAYING;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            ImGui::End();
+        }
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+        
+        // Manual Frame Pacing & Latency Control
+        // Apply VSync setting
+        glfwSwapInterval(Config::vsync ? 1 : 0);
+        
+        if (!Config::vsync && Config::fpsCap > 0) {
+            float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
+            float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
+            if (frameTime < frameTarget) {
+                while (static_cast<float>(glfwGetTime()) - currentFrame < frameTarget) {}
+            }
+        }
+    }
+
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 0;
+}
