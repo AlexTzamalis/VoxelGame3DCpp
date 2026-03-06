@@ -3,6 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <unordered_set>
 #include <GL/glew.h>
 
 ChunkManager::ChunkManager() : isRunning_(true) {
@@ -165,18 +166,10 @@ void ChunkManager::defragmentVRAM() {
 }
 
 void ChunkManager::update(const glm::vec3& cameraPosition) {
-    // Throttle: process max 8 finished chunks per frame to prevent main-thread stalls
-    const int MAX_CHUNKS_PER_FRAME = 8;
-    const int MAX_COLUMN_REBUILDS_PER_FRAME = 4;
-    const int MAX_VRAM_UPLOADS_PER_FRAME = 6;
-    
+    // Process ALL ready chunks - mesh gen already happened off-thread, this is just pointer moves
     {
         std::lock_guard<std::mutex> lock(readyMutex_);
-        int count = 0;
-        while (!readyChunks_.empty() && count < MAX_CHUNKS_PER_FRAME) {
-            auto chunk = std::move(readyChunks_.back());
-            readyChunks_.pop_back();
-            
+        for (auto& chunk : readyChunks_) {
             glm::ivec3 pos = chunk->getPosition();
             glm::ivec2 colPos(pos.x, pos.z);
             
@@ -187,8 +180,8 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             
             chunks_[pos] = std::move(chunk);
             generatingChunks_.erase(pos);
-            count++;
         }
+        readyChunks_.clear();
     }
 
     // Determine which chunk the camera is currently inside
@@ -198,66 +191,66 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         std::floor(cameraPosition.z / Chunk::CHUNK_SIZE)
     );
 
-    // Keep track of which chunks are valid and within render distance this frame
-    std::unordered_map<glm::ivec3, bool, IVec3Hash> activeChunks;
+    // CRITICAL OPTIMIZATION: Only run the expensive O(n³) scan when camera moves to a new chunk
+    if (cameraChunkPos != lastScanChunkPos_) {
+        lastScanChunkPos_ = cameraChunkPos;
+        
+        // Build active set for unloading
+        std::unordered_set<int64_t> activeKeys;
+        std::vector<glm::ivec3> newTasks;
 
-    std::vector<glm::ivec3> newTasks;
-
-    for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
-        for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
-            
-            // Mathematically cull the corners of the grid to make drawing distance a beautiful circle!
-            if (x * x + z * z > Config::renderDistance * Config::renderDistance) continue;
-            
-            for (int y = -Config::renderDistanceY; y <= Config::renderDistanceY; ++y) {
-                // Hard floor/ceiling limits so we don't load memory infinitely up or deeply down below generation layer
-                if (cameraChunkPos.y + y < -32) continue; // Allows up to Y:-512
-                if (cameraChunkPos.y + y > 16) continue;  // Allows up to Y:256
+        for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
+            for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
+                if (x * x + z * z > Config::renderDistance * Config::renderDistance) continue;
                 
-                glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
-                activeChunks[chunkPos] = true;
+                for (int y = -Config::renderDistanceY; y <= Config::renderDistanceY; ++y) {
+                    int gy = cameraChunkPos.y + y;
+                    if (gy < -32 || gy > 16) continue;
+                    
+                    glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, y, z);
+                    int64_t key = ((int64_t)chunkPos.x << 40) | ((int64_t)(chunkPos.y & 0xFFFFF) << 20) | (int64_t)(chunkPos.z & 0xFFFFF);
+                    activeKeys.insert(key);
 
-                // If it's missing entirely (not loaded, and not generating currently)
-                if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
-                    generatingChunks_[chunkPos] = true; // Mark as started
-                    newTasks.push_back(chunkPos);
+                    if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
+                        generatingChunks_[chunkPos] = true;
+                        newTasks.push_back(chunkPos);
+                    }
                 }
             }
         }
-    }
-    
-    if (!newTasks.empty()) {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
-        // Sort DESCENDING so the closest chunks are placed at the back and popped first by worker threads
-        std::sort(pendingTasks_.begin(), pendingTasks_.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
-            float distA = (a.x - cameraChunkPos.x)*(a.x - cameraChunkPos.x) + (a.y - cameraChunkPos.y)*(a.y - cameraChunkPos.y) + (a.z - cameraChunkPos.z)*(a.z - cameraChunkPos.z);
-            float distB = (b.x - cameraChunkPos.x)*(b.x - cameraChunkPos.x) + (b.y - cameraChunkPos.y)*(b.y - cameraChunkPos.y) + (b.z - cameraChunkPos.z)*(b.z - cameraChunkPos.z);
-            return distA > distB;
-        });
-        cv_.notify_all();
-    }
+        
+        if (!newTasks.empty()) {
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
+            std::sort(pendingTasks_.begin(), pendingTasks_.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
+                float distA = (a.x - cameraChunkPos.x)*(a.x - cameraChunkPos.x) + (a.y - cameraChunkPos.y)*(a.y - cameraChunkPos.y) + (a.z - cameraChunkPos.z)*(a.z - cameraChunkPos.z);
+                float distB = (b.x - cameraChunkPos.x)*(b.x - cameraChunkPos.x) + (b.y - cameraChunkPos.y)*(b.y - cameraChunkPos.y) + (b.z - cameraChunkPos.z)*(b.z - cameraChunkPos.z);
+                return distA > distB;
+            });
+            cv_.notify_all();
+        }
 
-    // Unload chunks outside radius
-    for (auto it = chunks_.begin(); it != chunks_.end(); ) {
-        if (activeChunks.find(it->first) == activeChunks.end()) {
-            if (it->second->isModified_) {
-                WorldManager::saveChunk(it->first, it->second->getVoxels());
+        // Unload chunks outside radius
+        for (auto it = chunks_.begin(); it != chunks_.end(); ) {
+            int64_t key = ((int64_t)it->first.x << 40) | ((int64_t)(it->first.y & 0xFFFFF) << 20) | (int64_t)(it->first.z & 0xFFFFF);
+            if (activeKeys.find(key) == activeKeys.end()) {
+                if (it->second->isModified_) {
+                    WorldManager::saveChunk(it->first, it->second->getVoxels());
+                }
+                glm::ivec2 colPos(it->first.x, it->first.z);
+                if (columns_.find(colPos) != columns_.end()) {
+                    columns_[colPos]->needsUpdate = true;
+                }
+                it = chunks_.erase(it);
+            } else {
+                ++it;
             }
-            glm::ivec2 colPos(it->first.x, it->first.z);
-            if (columns_.find(colPos) != columns_.end()) {
-                columns_[colPos]->needsUpdate = true;
-            }
-            it = chunks_.erase(it);
-        } else {
-            ++it;
         }
     }
 
-    // Throttled column rebuilds
-    int columnRebuilds = 0;
+    // Column rebuilds - process ALL dirty columns (work is lightweight)
     for (auto it = columns_.begin(); it != columns_.end(); ) {
-        if (it->second->needsUpdate && columnRebuilds < MAX_COLUMN_REBUILDS_PER_FRAME) {
+        if (it->second->needsUpdate) {
             std::vector<VoxelVertex> allVerts;
             std::vector<unsigned int> allInds;
             std::vector<unsigned int> allTrans;
@@ -291,13 +284,12 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                 it->second->transparentIndices = std::move(allTrans);
                 it->second->needsUpdate = false;
                 it->second->inVRAM = false;
-                columnRebuilds++;
             }
         }
         ++it;
     }
 
-    // Throttled VRAM uploads
+    // VRAM uploads - process all pending
     bool needsDefrag = false;
     for (auto& [pos, col] : columns_) {
         if (!col->inVRAM && !col->vertices.empty()) {
@@ -313,11 +305,10 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         defragmentVRAM();
         mdiCommandsDirty_ = true;
     } else {
-        int vramUploads = 0;
         glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
         for (auto& [pos, col] : columns_) {
-            if (!col->inVRAM && !col->vertices.empty() && vramUploads < MAX_VRAM_UPLOADS_PER_FRAME) {
+            if (!col->inVRAM && !col->vertices.empty()) {
                 col->vertexOffset = currentVertexOffset_;
                 col->indexOffset = currentIndexOffset_;
                 
@@ -334,9 +325,8 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
                 currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
                 col->inVRAM = true;
                 mdiCommandsDirty_ = true;
-                vramUploads++;
                 
-                // Free CPU-side mesh data immediately after VRAM upload!
+                // Free CPU-side mesh data after VRAM upload
                 col->vertices.clear();
                 col->vertices.shrink_to_fit();
                 col->indices.clear();
@@ -346,9 +336,6 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
             }
         }
     }
-
-    // Also prune generating requests (if player moved so fast we left range before it even started)
-    // For now we can ignore pruning generating jobs to keep logic simple, they will just get instantly deleted next frame
 }
 
 void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool bypassFrustum, float radialDistLimit) const {
@@ -489,6 +476,8 @@ void ChunkManager::clear() {
     
     currentVertexOffset_ = 0;
     currentIndexOffset_ = 0;
+    lastScanChunkPos_ = glm::ivec3(999999);
+    mdiCommandsDirty_ = true;
 }
 
 bool ChunkManager::isChunkColumnLoaded(int cx, int cz) const {

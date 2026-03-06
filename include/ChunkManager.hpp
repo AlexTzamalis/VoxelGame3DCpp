@@ -91,6 +91,9 @@ private:
     mutable std::vector<DrawElementsIndirectCommand> cachedOpaqueCmds_;
     mutable std::vector<DrawElementsIndirectCommand> cachedTransCmds_;
     mutable bool mdiCommandsDirty_ = true;
+    
+    // Only re-scan chunks when camera moves to a new chunk
+    glm::ivec3 lastScanChunkPos_ = glm::ivec3(999999);
 
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;
