@@ -154,6 +154,8 @@ void ChunkManager::defragmentVRAM() {
 
         currentVertexOffset_ += col->vertices.size();
         currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
+        col->allocatedVerts = col->vertices.size();
+        col->allocatedInds = col->indices.size() + col->transparentIndices.size();
         col->inVRAM = true;
         
         // Free CPU data after defrag upload too
@@ -296,57 +298,79 @@ void ChunkManager::update(const glm::vec3& cameraPosition) {
         ++it;
     }
 
-    // VRAM uploads - also time-budgeted
+    // VRAM uploads - reuse old slots when possible to avoid fragmentation
     auto uploadStart = std::chrono::high_resolution_clock::now();
     auto totalElapsed = uploadStart - frameStart;
     if (totalElapsed < frameBudget) {
-        bool needsDefrag = false;
+        glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
+        
         for (auto& [pos, col] : columns_) {
             if (!col->inVRAM && !col->vertices.empty()) {
-                if (currentVertexOffset_ + col->vertices.size() >= 40000000 || 
-                    currentIndexOffset_ + col->indices.size() + col->transparentIndices.size() >= 60000000) {
-                    needsDefrag = true;
-                    break;
-                }
-            }
-        }
-
-        if (needsDefrag) {
-            defragmentVRAM();
-            mdiCommandsDirty_ = true;
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, mdiVBO_);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdiEBO_);
-            for (auto& [pos, col] : columns_) {
-                if (!col->inVRAM && !col->vertices.empty()) {
-                    auto elapsed = std::chrono::high_resolution_clock::now() - frameStart;
-                    if (elapsed > frameBudget) break; // Defer remaining to next frame
+                auto elapsed = std::chrono::high_resolution_clock::now() - frameStart;
+                if (elapsed > frameBudget) break;
+                
+                size_t newVertCount = col->vertices.size();
+                size_t newIndCount = col->indices.size() + col->transparentIndices.size();
+                
+                bool canReuse = (col->allocatedVerts > 0 && 
+                                 newVertCount <= col->allocatedVerts && 
+                                 newIndCount <= col->allocatedInds);
+                
+                if (canReuse) {
+                    // Overwrite in-place — no offset change, no fragmentation!
+                    glBufferSubData(GL_ARRAY_BUFFER, col->vertexOffset * sizeof(VoxelVertex), 
+                                    newVertCount * sizeof(VoxelVertex), col->vertices.data());
+                    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->indexOffset * sizeof(unsigned int), 
+                                    col->indices.size() * sizeof(unsigned int), col->indices.data());
+                    
+                    col->transparentIndexOffset = col->indexOffset + col->indices.size();
+                    if (!col->transparentIndices.empty()) {
+                        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->transparentIndexOffset * sizeof(unsigned int), 
+                                        col->transparentIndices.size() * sizeof(unsigned int), col->transparentIndices.data());
+                    }
+                } else {
+                    // Need new slot — check if we have room to append
+                    if (currentVertexOffset_ + newVertCount >= 40000000 || 
+                        currentIndexOffset_ + newIndCount >= 60000000) {
+                        // Out of space — trigger defrag and break
+                        defragmentVRAM();
+                        mdiCommandsDirty_ = true;
+                        break;
+                    }
                     
                     col->vertexOffset = currentVertexOffset_;
                     col->indexOffset = currentIndexOffset_;
                     
-                    glBufferSubData(GL_ARRAY_BUFFER, col->vertexOffset * sizeof(VoxelVertex), col->vertices.size() * sizeof(VoxelVertex), col->vertices.data());
+                    glBufferSubData(GL_ARRAY_BUFFER, col->vertexOffset * sizeof(VoxelVertex), 
+                                    newVertCount * sizeof(VoxelVertex), col->vertices.data());
+                    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->indexOffset * sizeof(unsigned int), 
+                                    col->indices.size() * sizeof(unsigned int), col->indices.data());
                     
-                    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->indexOffset * sizeof(unsigned int), col->indices.size() * sizeof(unsigned int), col->indices.data());
-                    
-                    col->transparentIndexOffset = currentIndexOffset_ + col->indices.size();
+                    col->transparentIndexOffset = col->indexOffset + col->indices.size();
                     if (!col->transparentIndices.empty()) {
-                        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->transparentIndexOffset * sizeof(unsigned int), col->transparentIndices.size() * sizeof(unsigned int), col->transparentIndices.data());
+                        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, col->transparentIndexOffset * sizeof(unsigned int), 
+                                        col->transparentIndices.size() * sizeof(unsigned int), col->transparentIndices.data());
                     }
-
-                    currentVertexOffset_ += col->vertices.size();
-                    currentIndexOffset_ += col->indices.size() + col->transparentIndices.size();
-                    col->inVRAM = true;
-                    mdiCommandsDirty_ = true;
                     
-                    // Free CPU-side mesh data after VRAM upload
-                    col->vertices.clear();
-                    col->vertices.shrink_to_fit();
-                    col->indices.clear();
-                    col->indices.shrink_to_fit();
-                    col->transparentIndices.clear();
-                    col->transparentIndices.shrink_to_fit();
+                    currentVertexOffset_ += newVertCount;
+                    currentIndexOffset_ += newIndCount;
+                    col->allocatedVerts = newVertCount;
+                    col->allocatedInds = newIndCount;
                 }
+                
+                col->opaqueCount = col->indices.size();
+                col->transparentCount = col->transparentIndices.size();
+                col->inVRAM = true;
+                mdiCommandsDirty_ = true;
+                
+                // Free CPU-side mesh data after VRAM upload
+                col->vertices.clear();
+                col->vertices.shrink_to_fit();
+                col->indices.clear();
+                col->indices.shrink_to_fit();
+                col->transparentIndices.clear();
+                col->transparentIndices.shrink_to_fit();
             }
         }
     }

@@ -63,6 +63,9 @@ namespace Config {
     extern bool enableClouds;
     extern float cloudHeight;
     extern float cloudScale;
+    extern float cloudSpeed;
+    extern float saturation;
+    extern float contrast;
 
     // Load & Save to disk
     void load();
