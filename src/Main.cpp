@@ -293,7 +293,7 @@ int main() {
     Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
     
     // --- Set up Shadow Map FBO ---
-    const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
+    const unsigned int SHADOW_WIDTH = Config::shadowMapSize, SHADOW_HEIGHT = Config::shadowMapSize;
     unsigned int depthMapFBO;
     glGenFramebuffers(1, &depthMapFBO);
     
@@ -386,7 +386,7 @@ int main() {
             float timeVal = static_cast<float>(glfwGetTime());
             float dayPhase = timeVal * Config::dayTimeSpeed;
             
-            // Vector pointing TOWARDS the sun
+            // Vector pointing TOWARDS the sun - GLOBAL axis, not relative to player
             glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.3f));
             float sunHeight = sunDir.y;
 
@@ -403,7 +403,7 @@ int main() {
             glm::vec3 lightColor;
             if (sunHeight > 0.2f) lightColor = glm::vec3(1.2f, 1.1f, 1.0f); // Bright Midday
             else if (sunHeight > 0.0f) lightColor = glm::mix(glm::vec3(1.2f, 0.5f, 0.2f), glm::vec3(1.2f, 1.1f, 1.0f), sunHeight / 0.2f); // Golden Hour
-            else lightColor = glm::vec3(0.15f, 0.2f, 0.35f); // Piercing Moonlight tint
+            else lightColor = glm::vec3(0.1f, 0.12f, 0.2f) + glm::vec3(Config::ambientBrightness * 0.3f); // Moonlight + ambient boost
 
             // Use the moon as the light source effectively if the sun is down
             glm::vec3 shaderLightDir = sunHeight > 0.0f ? sunDir : glm::vec3(-sunDir.x, -sunDir.y, -sunDir.z); 
@@ -422,7 +422,13 @@ int main() {
             float shadowDist = Config::renderDistance * 16.0f; 
             glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
             
-            glm::vec3 lightTarget = camera.position(); 
+            // Shadow light position: GLOBAL, not relative to player camera
+            // Use a fixed world-space origin so shadows stay consistent as you move
+            glm::vec3 lightTarget = glm::vec3(
+                std::floor(camera.position().x / 16.0f) * 16.0f,
+                0.0f,
+                std::floor(camera.position().z / 16.0f) * 16.0f
+            );
             glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
             
             glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -468,6 +474,14 @@ int main() {
             shader.setInt("isUnderwater", isUnderwater ? 1 : 0);
             shader.setVec3("cameraPos", camera.position());
             shader.setVec3("skyColor", skyColor);
+            
+            // Granular shader uniforms
+            shader.setFloat("shadowIntensity", Config::shadowIntensity);
+            shader.setInt("enableFog", Config::enableFog ? 1 : 0);
+            shader.setInt("enableFaceShading", Config::enableDirectionalFaceShading ? 1 : 0);
+            shader.setFloat("ambientBrightness", Config::ambientBrightness);
+            shader.setInt("waterMode", Config::waterMode);
+            shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
             
             // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
@@ -738,8 +752,8 @@ int main() {
             ImGui::End();
         }
         else if (Config::currentState == GameState::SETTINGS) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(500, 420), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 280, Config::windowHeight / 2.0f - 280), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_Always);
             ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
             if (ImGui::BeginTabBar("SettingsTabs")) {
@@ -747,7 +761,8 @@ int main() {
                     ImGui::Spacing();
                     ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
                     ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
-                    ImGui::SliderInt("Max FPS", &Config::fpsCap, 30, 240);
+                    ImGui::SliderInt("Max FPS", &Config::fpsCap, 30, 500);
+                    ImGui::Checkbox("VSync", &Config::vsync);
                     if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {
                         camera.setFov(Config::cameraFov);
                     }
@@ -756,24 +771,35 @@ int main() {
                 
                 if (ImGui::BeginTabItem("Shaders")) {
                     ImGui::Spacing();
+                    ImGui::SeparatorText("Master");
+                    ImGui::Checkbox("Enable Advanced Shaders", &Config::enableShaders);
                     
-                    bool changedShaders = ImGui::Checkbox("Enable Advanced Shaders (Water, Fog, Radiosity)", &Config::enableShaders);
-                    
+                    ImGui::SeparatorText("Shadows");
                     if (Config::enableShaders) {
-                        ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &Config::enableShadows);
+                        ImGui::Checkbox("Enable Shadows", &Config::enableShadows);
+                        if (Config::enableShadows) {
+                            ImGui::SliderFloat("Shadow Intensity", &Config::shadowIntensity, 0.1f, 1.0f);
+                            ImGui::SliderInt("Shadow Map Size", &Config::shadowMapSize, 512, 4096);
+                        }
                     } else {
                         ImGui::BeginDisabled();
-                        bool f = false; ImGui::Checkbox("Enable Dynamic Cascaded Shadows", &f);
+                        bool f = false; ImGui::Checkbox("Enable Shadows", &f);
                         ImGui::EndDisabled();
                     }
                     
-                    // Allow UI to tweak Day / Night Speed dynamically
-                    // Display it slightly easier to read (multiplier over 24h)
-                    float currentHours = (0.0021816f / Config::dayTimeSpeed) * 0.8f; // ~1h baseline display
-                    if (ImGui::SliderFloat("Day Speed Mult", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {
-                        // Dynamically updates gameplay lighting loop above!
-                    }
-                    ImGui::TextDisabled("Default is 0.00218 (48 real-life minutes for 24h)");
+                    ImGui::SeparatorText("Water");
+                    const char* waterModes[] = { "Basic (Flat)", "Advanced (Waves + Reflections)" };
+                    ImGui::Combo("Water Mode", &Config::waterMode, waterModes, 2);
+                    
+                    ImGui::SeparatorText("Lighting & Atmosphere");
+                    ImGui::Checkbox("Enable Fog", &Config::enableFog);
+                    ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
+                    ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                    ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
+                    
+                    ImGui::SeparatorText("Day/Night Cycle");
+                    if (ImGui::SliderFloat("Day Speed", &Config::dayTimeSpeed, 0.0001f, 0.1f, "%.5f")) {}
+                    ImGui::TextDisabled("Default: 0.00218 (48min per 24h)");
                     
                     ImGui::EndTabItem();
                 }
@@ -877,10 +903,14 @@ int main() {
         float frameTime = static_cast<float>(glfwGetTime()) - currentFrame;
         float frameTarget = 1.0f / static_cast<float>(Config::fpsCap);
         
-        if (frameTime < frameTarget) {
-            float sleepTime = frameTarget - frameTime;
-            // Sleep the core CPU thread to drop rendering cycles and smooth out GPU stutter!
-            std::this_thread::sleep_for(std::chrono::duration<float>(sleepTime));
+        // Apply VSync setting
+        glfwSwapInterval(Config::vsync ? 1 : 0);
+        
+        if (!Config::vsync && frameTime < frameTarget) {
+            // Busy-wait for precise FPS cap (sleep_for is too imprecise on Windows)
+            while (static_cast<float>(glfwGetTime()) - currentFrame < frameTarget) {
+                // Spin
+            }
         }
     }
 
