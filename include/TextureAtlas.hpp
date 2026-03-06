@@ -22,4 +22,7 @@ namespace TextureAtlas {
     
     // Return texture ID
     unsigned int getTextureID();
+    
+    // Standalone GUI textures
+    unsigned int getGuiTexture(const std::string& name);
 }

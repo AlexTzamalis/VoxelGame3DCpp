@@ -10,7 +10,8 @@ namespace fs = std::filesystem;
 
 namespace {
     unsigned int atlasTextureId = 0;
-    std::unordered_map<std::string, float> textureLayers; // replacing UVs
+    std::unordered_map<std::string, float> textureLayers; 
+    std::unordered_map<std::string, unsigned int> guiTextures; // standalone GL_TEXTURE_2D
 }
 
 bool TextureAtlas::build(const std::string& directoryPath) {
@@ -21,80 +22,83 @@ bool TextureAtlas::build(const std::string& directoryPath) {
     if (path.length() >= 4 && path.substr(path.length() - 4) == ".zip") {
         isZip = true;
         path = tempExtractDir;
-        if (fs::exists(tempExtractDir)) {
-            fs::remove_all(tempExtractDir);
-        }
+        if (fs::exists(tempExtractDir)) fs::remove_all(tempExtractDir);
         fs::create_directory(tempExtractDir);
         
         std::string cmd = "tar -xf \"" + directoryPath + "\" -C \"" + tempExtractDir + "\"";
-        if (std::system(cmd.c_str()) != 0) {
-            std::cerr << "Failed to extract zip file: " << directoryPath << std::endl;
-            return false;
-        }
-    }
-
-    if (!fs::exists(path) || !fs::is_directory(path)) {
-        std::cerr << "Texture pack directory/archive not found: " << directoryPath << std::endl;
-        return false;
+        if (std::system(cmd.c_str()) != 0) return false;
     }
 
     struct ImageData {
         std::string name;
+        std::string path;
         int width, height, channels;
         unsigned char* data;
+        bool isGui;
     };
 
     std::vector<ImageData> images;
-    int maxTileExt = 16; // Standard Minecraft textures are 16x16, enforce this.
+    int maxTileExt = 16; 
 
-    // Load all pngs from the extracted directory (supports nested subdirectories like /Blocks and /UI)
     for (const auto& entry : fs::recursive_directory_iterator(path)) {
         if (entry.path().extension() == ".png") {
+            std::string relPath = fs::relative(entry.path(), path).string();
+            bool isGui = (relPath.find("gui") != std::string::npos);
+
             ImageData img;
-            img.name = entry.path().stem().string(); // filename without extension
+            img.name = entry.path().stem().string();
+            img.path = relPath;
+            img.isGui = isGui;
             
-            stbi_set_flip_vertically_on_load(1);
+            stbi_set_flip_vertically_on_load(isGui ? 0 : 1); // HUD textures usually not flipped
             img.data = stbi_load(entry.path().string().c_str(), &img.width, &img.height, &img.channels, 4);
             
             if (img.data) {
-                if (img.height > img.width && img.height % img.width == 0) {
-                    img.height = img.width; 
+                if (!isGui) {
+                    if (img.height > img.width && img.height % img.width == 0) img.height = img.width; 
+                    maxTileExt = std::max({maxTileExt, img.width, img.height});
                 }
                 images.push_back(img);
-                maxTileExt = std::max({maxTileExt, img.width, img.height});
-            } else {
-                std::cerr << "Failed to load image: " << entry.path().string() << std::endl;
             }
         }
     }
 
-    if (images.empty()) {
-        std::cerr << "No textures found in " << directoryPath << std::endl;
-        if (isZip) fs::remove_all(tempExtractDir);
-        return false;
-    }
-
-    if (atlasTextureId) {
-        glDeleteTextures(1, &atlasTextureId);
-    }
+    if (atlasTextureId) glDeleteTextures(1, &atlasTextureId);
+    for (auto& [name, tex] : guiTextures) glDeleteTextures(1, &tex);
+    guiTextures.clear();
     
     glGenTextures(1, &atlasTextureId);
     glBindTexture(GL_TEXTURE_2D_ARRAY, atlasTextureId);
 
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, maxTileExt, maxTileExt, images.size(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    // Filter images into block atlas (must be square tileable) and GUI (standalone)
+    std::vector<ImageData> atlasImages;
+    for (auto& img : images) {
+        if (img.isGui) {
+            unsigned int tex;
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.data);
+            guiTextures[img.name] = tex;
+            stbi_image_free(img.data);
+        } else {
+            atlasImages.push_back(img);
+        }
+    }
 
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, maxTileExt, maxTileExt, atlasImages.size(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     textureLayers.clear();
     
-    for (size_t i = 0; i < images.size(); ++i) {
-        auto& img = images[i];
-        
+    for (size_t i = 0; i < atlasImages.size(); ++i) {
+        auto& img = atlasImages[i];
         if (img.width != maxTileExt || img.height != maxTileExt) {
             std::vector<unsigned char> scaled(maxTileExt * maxTileExt * 4);
             for (int y = 0; y < maxTileExt; ++y) {
                 for (int x = 0; x < maxTileExt; ++x) {
                     int srcX = (x * img.width) / maxTileExt;
                     int srcY = (y * img.height) / maxTileExt;
-                    int srcIdx = (srcY * img.width + srcX) * 4; // guaranteed 4 channels
+                    int srcIdx = (srcY * img.width + srcX) * 4;
                     int dstIdx = (y * maxTileExt + x) * 4;
                     scaled[dstIdx + 0] = img.data[srcIdx + 0];
                     scaled[dstIdx + 1] = img.data[srcIdx + 1];
@@ -106,26 +110,23 @@ bool TextureAtlas::build(const std::string& directoryPath) {
         } else {
             glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, maxTileExt, maxTileExt, 1, GL_RGBA, GL_UNSIGNED_BYTE, img.data);
         }
-        
         textureLayers[img.name] = static_cast<float>(i);
         stbi_image_free(img.data);
     }
     
-    std::cout << "Successfully assembled dynamic texture array from " << images.size() << " files.\n";
-
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-    
-    // Auto-cleanup the extracted temporary directory
-    if (isZip) {
-        fs::remove_all(tempExtractDir);
-    }
-    
+
+    if (isZip) fs::remove_all(tempExtractDir);
     return true;
+}
+
+unsigned int TextureAtlas::getGuiTexture(const std::string& name) {
+    if (guiTextures.count(name)) return guiTextures[name];
+    return 0;
 }
 
 void TextureAtlas::bind(unsigned int unit) {

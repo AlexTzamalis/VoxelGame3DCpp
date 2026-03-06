@@ -505,6 +505,8 @@ int main() {
             shader.setInt("waterMode", Config::waterMode);
             shader.setInt("enableLeafWind", Config::enableLeafWind ? 1 : 0);
             shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
+            shader.setFloat("saturation", Config::saturation);
+            shader.setFloat("contrast", Config::contrast);
             
             // Render Fog Distances
             float renderDistBlocks = Config::renderDistance * 16.0f;
@@ -630,56 +632,67 @@ int main() {
             bgDrawList->AddLine(ImVec2(center.x - crosshairSize, center.y), ImVec2(center.x + crosshairSize, center.y), IM_COL32(255, 255, 255, 200), 2.0f);
             bgDrawList->AddLine(ImVec2(center.x, center.y - crosshairSize), ImVec2(center.x, center.y + crosshairSize), IM_COL32(255, 255, 255, 200), 2.0f);
 
-            // Hotbar Rendering
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - (9.0f * 50.0f) / 2.0f, Config::windowHeight - 80.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(9.0f * 50.0f, 65.0f), ImGuiCond_Always);
-            ImGui::Begin("Hotbar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+            // Custom Texture-based Hotbar Rendering
+            float hotbarW = 182.0f * 2.5f; 
+            float hotbarH = 22.0f * 2.5f;
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - hotbarW / 2.0f, Config::windowHeight - hotbarH - 20.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(hotbarW, hotbarH), ImGuiCond_Always);
+            ImGui::Begin("Hotbar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
             
+            unsigned int hotbarTex = TextureAtlas::getGuiTexture("hotbar");
+            unsigned int selectTex = TextureAtlas::getGuiTexture("hotbar_selection");
+            
+            if (hotbarTex) {
+                ImGui::GetWindowDrawList()->AddImage((void*)(uintptr_t)hotbarTex, ImGui::GetWindowPos(), 
+                    ImVec2(ImGui::GetWindowPos().x + hotbarW, ImGui::GetWindowPos().y + hotbarH));
+            }
+
             for (int i = 0; i < 9; ++i) {
-                if (i > 0) ImGui::SameLine();
+                float slotX = ImGui::GetWindowPos().x + (i * 20.0f * 2.5f) + 1 * 2.5f;
+                float slotY = ImGui::GetWindowPos().y + 1 * 2.5f;
+                float slotSize = 20.0f * 2.5f;
+
+                if (playerInventory.selectedHotbarIndex == i && selectTex) {
+                    ImGui::GetWindowDrawList()->AddImage((void*)(uintptr_t)selectTex, ImVec2(slotX - 2 * 2.5f, slotY - 2 * 2.5f), 
+                        ImVec2(slotX + slotSize + 2 * 2.5f, slotY + slotSize + 2 * 2.5f));
+                }
+
                 uint8_t item = playerInventory.slots[i].itemID;
-                
-                // Active slot styling via Frame changes
-                if (playerInventory.selectedHotbarIndex == i) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.8f, 0.8f, 0.5f));
-                    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
-                }
-                
-                std::string lbl = std::to_string(item) + "##btn" + std::to_string(i);
-                if (item == 0) lbl = " ##btn" + std::to_string(i); // Show space instead of 0 for air
-                
-                if (ImGui::Button(lbl.c_str(), ImVec2(40, 40))) {
-                    playerInventory.setSelectedHotbar(i);
-                }
-                
-                if (playerInventory.selectedHotbarIndex == i) {
-                    ImGui::PopStyleColor(2);
-                    ImGui::PopStyleVar();
+                if (item > 1) {
+                    // Draw block icon (using atlas UV)
+                    float uvIdx = TextureAtlas::getUVForBlock(item, 4); // Side face icon
+                    float atlasId = TextureAtlas::getTextureID();
+                    // Since it's an array, ImGui can't easily draw it without a custom shader, 
+                    // but we can use a placeholder for now or just text.
+                    ImGui::SetCursorScreenPos(ImVec2(slotX + 5, slotY + 5));
+                    ImGui::Text("%d", item);
                 }
             }
             ImGui::End();
 
-            // Draw full floating 27-slot Inventory Modal if E is Pressed
+            // Custom Inventory Modal
             if (playerInventory.isVisible) {
-                ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 100), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(500, 300), ImGuiCond_Always);
                 ImGui::Begin("Inventory", &playerInventory.isVisible, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
                 
-                for (int slot = 9; slot < 36; ++slot) {
-                    if ((slot - 9) % 9 != 0) ImGui::SameLine();
+                ImGui::Text("Creative Inventory");
+                ImGui::Separator();
+                
+                for (int slot = 0; slot < 36; ++slot) {
+                    if (slot % 9 != 0) ImGui::SameLine();
                     
                     uint8_t item = playerInventory.slots[slot].itemID;
                     std::string lbl = std::to_string(item) + "##inv" + std::to_string(slot);
                     if (item == 0) lbl = " ##inv" + std::to_string(slot);
                     
-                    ImGui::Button(lbl.c_str(), ImVec2(24, 24));
-                    // Basic placeholder mechanics - drag drop can be added next loop
+                    if (ImGui::Button(lbl.c_str(), ImVec2(48, 48))) {
+                        if (slot < 9) playerInventory.setSelectedHotbar(slot);
+                    }
                 }
                 
                 ImGui::End();
                 
-                // Fix cursor visibility when manually X-ing out of the window or toggling boolean
                 if (!playerInventory.isVisible) {
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                     firstMouse = true;
@@ -887,6 +900,8 @@ int main() {
                     ImGui::Checkbox("Enable Fog", &Config::enableFog);
                     ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
                     ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                    ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
+                    ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
                     ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
                     
                     ImGui::SeparatorText("Day/Night Cycle");

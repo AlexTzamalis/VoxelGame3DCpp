@@ -73,3 +73,5 @@ assets/texture_pack/
 assets/texture_packs/*.png
 assets/texture_packs/*.jpg
 assets/texture_packs/*.jpeg
+logs/
+build_log*.txt

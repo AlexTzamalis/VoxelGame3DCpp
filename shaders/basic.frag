@@ -28,179 +28,184 @@ uniform int enableFaceShading;
 uniform float ambientBrightness;
 uniform int waterMode;
 uniform int ultraMode;
+uniform float saturation;
+uniform float contrast;
 
-// Cloud uniforms
-uniform float cloudHeight;
-uniform float cloudScale;
-
-// Simple 3D noise for volumetric fog
-float hash(vec3 p) {
-    p = fract(p * vec3(443.8975, 397.2973, 491.1871));
-    p += dot(p, p.yxz + 19.19);
-    return fract((p.x + p.y) * p.z);
+// --- ACES Film Tone Mapping ---
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
-float noise3D(vec3 p) {
-    vec3 i = floor(p);
-    vec3 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    
-    return mix(
-        mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
-            mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-        mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-            mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
-        f.z);
-}
-
-float fbm(vec3 p) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    for (int i = 0; i < 4; i++) {
-        value += amplitude * noise3D(p);
-        p *= 2.0;
-        amplitude *= 0.5;
-    }
-    return value;
-}
-
-float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
-    
-    if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
-        return 0.0;
-        
-    float currentDepth = projCoords.z;
-    float bias = max(0.005 * (1.0 - dot(normal, ld)), 0.001);
-    
-    // PCF soft shadows
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+// --- PCSS (Percentage Closer Soft Shadows) ---
+float findBlocker(vec2 uv, float zReceiver) {
+    float searchRadius = 0.01 * (zReceiver); 
+    int blockers = 0;
+    float avgBlockerDepth = 0.0;
+    for(int i = -2; i <= 2; i++) {
+        for(int j = -2; j <= 2; j++) {
+            float d = texture(shadowMap, uv + vec2(i, j) * searchRadius * 0.5).r;
+            if(d < zReceiver - 0.001) {
+                blockers++;
+                avgBlockerDepth += d;
+            }
         }
     }
-    shadow /= 9.0;
+    if(blockers == 0) return -1.0;
+    return avgBlockerDepth / float(blockers);
+}
+
+float PCSS(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
+        return 0.0;
+    float zReceiver = projCoords.z;
+    float bias = max(0.002 * (1.0 - dot(normal, ld)), 0.0008);
+    float avgBlockerDepth = findBlocker(projCoords.xy, zReceiver);
+    if(avgBlockerDepth == -1.0) return 0.0;
+    float penumbraSize = (zReceiver - avgBlockerDepth) / avgBlockerDepth;
+    float filterRadius = clamp(penumbraSize * 0.1, 0.001, 0.02);
+    float shadow = 0.0;
+    const int SAMPLES = 16;
+    vec2 PoissonDisk[16] = vec2[](
+        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+        vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
+        vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+        vec2(-0.38204446, 0.62256721), vec2(0.12984530, -0.15427459),
+        vec2(0.70119661, 0.52841903), vec2(0.81146545, -0.41320341),
+        vec2(-0.061440713, 0.051305282), vec2(0.38380316, -0.55470874),
+        vec2(-0.45522521, -0.63582498), vec2(0.85404491, 0.10652077),
+        vec2(-0.27218335, -0.040134442), vec2(0.53742981, 0.71602447)
+    );
+    for(int i = 0; i < SAMPLES; i++) {
+        float d = texture(shadowMap, projCoords.xy + PoissonDisk[i] * filterRadius).r;
+        if(zReceiver - bias > d) shadow += 1.0;
+    }
+    return (shadow / float(SAMPLES)) * shadowIntensity;
+}
+
+// --- Photon Sky Model (Simplified Atmospheric Scattering) ---
+vec3 getPhotonSky(vec3 dir, vec3 sunDir) {
+    float sunDot = dot(dir, sunDir);
+    float zenith = max(dir.y, 0.0);
     
-    return shadow * shadowIntensity;
+    // Rayleigh scattering approximation
+    vec3 sky = mix(vec3(0.15, 0.25, 0.5), vec3(0.05, 0.4, 0.9), zenith);
+    // Sunset/Sunrise horizon
+    float horizon = 1.0 - abs(dir.y);
+    vec3 sunset = vec3(1.0, 0.25, 0.05) * pow(horizon, 4.0) * max(sunDir.y + 0.2, 0.0) * 0.8;
+    
+    // Sun Disk
+    float sun = smoothstep(0.998, 0.999, sunDot);
+    vec3 sunColor = vec3(1.0, 0.9, 0.7) * 2.0;
+    
+    return sky + sunset + sun * sunColor;
 }
 
 void main() {
+    float distance = length(FragPos - cameraPos);
+    vec3 viewDir = normalize(cameraPos - FragPos);
+    vec3 sunDir = normalize(lightDir);
+
     vec4 texColor = texture(textureAtlas, TexCoord);
     if (texColor.a < 0.1) discard;
     
-    texColor *= VertexColor; 
+    // Smooth Water (VertexColor contains AO)
+    bool isWater = (VertexColor.a > 0.65 && VertexColor.a < 0.75);
+    texColor *= VertexColor;
     
-    // === WATER RENDERING ===
-    if (VertexColor.a > 0.65 && VertexColor.a < 0.75) {
-        if (waterMode == 1) {
-            texColor.rgb *= vec3(0.15, 0.4, 0.95);
-            texColor.a = 0.82;
-            
-            vec3 viewDir = normalize(cameraPos - FragPos);
-            vec3 reflectDir = reflect(-normalize(lightDir), normalize(Normal));
-            float spec = pow(max(dot(viewDir, reflectDir), 0.0), 64.0);
-            texColor.rgb += vec3(spec * 0.8) * lightColor;
-            
-            // Fresnel effect — more reflective at grazing angles
-            if (ultraMode == 1) {
-                float fresnel = pow(1.0 - max(dot(viewDir, normalize(Normal)), 0.0), 3.0);
-                texColor.rgb = mix(texColor.rgb, skyColor * 0.6, fresnel * 0.4);
-            }
-        } else {
-            texColor.rgb *= vec3(0.3, 0.5, 0.9);
-            texColor.a = 0.75;
-        }
+    if (isWater && waterMode == 1) {
+        texColor.rgb *= vec3(0.15, 0.45, 0.8); 
+        texColor.a = 0.82; // Slightly more opaque to hide "void" gaps if any
     }
-    
+
     vec3 N = normalize(Normal);
     
-    // === DIRECTIONAL FACE SHADING (Minecraft-style) ===
+    // --- Face Shading ---
     float faceMul = 1.0;
     if (enableFaceShading == 1) {
-        if (abs(N.y) > 0.5) {
-            faceMul = N.y > 0.0 ? 1.0 : 0.5;
-        } else if (abs(N.x) > 0.5) {
-            faceMul = 0.7;
-        } else if (abs(N.z) > 0.5) {
-            faceMul = 0.8;
-        }
+        if (abs(N.y) > 0.5) faceMul = N.y > 0.0 ? 1.0 : 0.45;
+        else if (abs(N.x) > 0.5) faceMul = 0.7;
+        else if (abs(N.z) > 0.5) faceMul = 0.85;
     }
     
-    // === AMBIENT LIGHTING ===
+    // --- Photon Ambient ---
     vec3 ambient;
     if (enableShaders == 1) {
-        float skyLight = clamp(0.5 + 0.5 * N.y, 0.0, 1.0);
-        vec3 skyAmbient = mix(vec3(ambientBrightness * 0.4, ambientBrightness * 0.45, ambientBrightness * 0.6), 
-                              skyColor * 0.85, skyLight);
-        ambient = skyAmbient * 0.7;
+        float skySide = clamp(0.5 + 0.5 * N.y, 0.0, 1.0);
+        vec3 hemi = mix(vec3(0.04, 0.05, 0.06), skyColor * 0.7, skySide);
+        ambient = hemi * (ultraMode == 1 ? 0.5 : 0.4);
         ambient = max(ambient, vec3(ambientBrightness));
-        
-        // Ultra mode: hemisphere ambient with ground bounce
-        if (ultraMode == 1) {
-            vec3 groundColor = vec3(0.15, 0.2, 0.1); // Green-ish ground bounce
-            vec3 hemiAmbient = mix(groundColor, skyColor * 0.6, skyLight * 0.5 + 0.5);
-            ambient = hemiAmbient * 0.5;
-            ambient = max(ambient, vec3(ambientBrightness));
-        }
     } else {
-        ambient = vec3(max(0.4, ambientBrightness));
+        ambient = vec3(max(0.45, ambientBrightness));
     }
     
-    // === DIRECTIONAL SUN/MOON LIGHT ===
-    float diff = max(dot(N, normalize(lightDir)), 0.0);
+    // --- Diffuse ---
+    float diff = max(dot(N, sunDir), 0.0);
+    if (ultraMode == 1) diff = mix(diff, diff * 0.4 + 0.6, 0.1); // Soft wrap
     vec3 diffuse = diff * lightColor;
     
-    // Ultra mode: wrap lighting for softer transitions
-    if (ultraMode == 1) {
-        float wrapDiff = max(dot(N, normalize(lightDir)) * 0.5 + 0.5, 0.0);
-        diffuse = wrapDiff * lightColor * 0.7;
-    }
-    
-    // === SHADOWS ===
+    // --- Shadows ---
     float shadow = 0.0;
     if (enableShadows == 1) {
-        shadow = ShadowCalculation(FragPosLightSpace, N, normalize(lightDir));
+        if (ultraMode == 1 && distance < 150.0) {
+            shadow = PCSS(FragPosLightSpace, N, sunDir);
+        } else {
+            vec3 projCoords = FragPosLightSpace.xyz / FragPosLightSpace.w * 0.5 + 0.5;
+            float bias = max(0.002 * (1.0 - dot(N, sunDir)), 0.0008);
+            if (texture(shadowMap, projCoords.xy).r < projCoords.z - bias) shadow = 0.6;
+            shadow *= shadowIntensity;
+        }
     }
     
-    // Combine lighting
     vec3 result = (ambient + (1.0 - shadow) * diffuse) * texColor.rgb * faceMul;
     
-    // === FOG ===
-    float distance = length(FragPos - cameraPos);
-    vec4 finalColor;
+    // --- Water Specular & Fresnel ---
+    if (isWater && waterMode == 1) {
+        vec3 reflectDir = reflect(-sunDir, N);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 256.0);
+        result += lightColor * spec * 0.8;
+        
+        if (ultraMode == 1) {
+            float fresnel = pow(1.0 - max(dot(viewDir, N), 0.0), 5.0);
+            vec3 skyRefl = skyColor * 0.5; 
+            result = mix(result, skyRefl, fresnel * 0.4);
+        }
+    }
+    
+    // --- Grading ---
+    if (enableShaders == 1) {
+        result = mix(vec3(0.5), result, contrast);
+        float lum = dot(result, vec3(0.2126, 0.7152, 0.0722));
+        result = mix(vec3(lum), result, saturation);
+        result = ACESFilm(result * 1.05);
+    }
+    
+    // --- Fog (Photon Style) ---
     if (enableFog == 1) {
         float fogFactor = smoothstep(fogStart, fogEnd, distance);
-        
-        // Ultra mode: Volumetric fog with height falloff
         if (ultraMode == 1) {
-            float heightFog = exp(-max(FragPos.y - 60.0, 0.0) * 0.02);
+            float heightFog = exp(-max(FragPos.y - 64.0, 0.0) * 0.015);
             fogFactor = mix(fogFactor, 1.0, heightFog * fogFactor * 0.3);
         }
+        result = mix(result, skyColor, fogFactor);
+    }
+    
+    // --- Underwater ---
+    if (isUnderwater == 1) {
+        vec3 underwaterBlue = vec3(0.05, 0.2, 0.6);
+        float depthFog = 1.0 - exp(-distance * 0.02);
+        result = mix(result * vec3(0.3, 0.7, 1.0), underwaterBlue, depthFog);
         
-        finalColor = vec4(mix(result, skyColor, fogFactor), texColor.a);
-    } else {
-        finalColor = vec4(result, texColor.a);
+        // Caustics / Ray effects
+        float rays = sin(FragPos.x * 0.4 + time * 1.2) * cos(FragPos.z * 0.4 + time * 1.2);
+        if (rays > 0.0) result += vec3(0.02, 0.1, 0.2) * rays;
     }
     
-    // === UNDERWATER EFFECTS ===
-    if (enableShaders == 1 && isUnderwater == 1) {
-        finalColor.rgb *= vec3(0.3, 0.65, 1.0);
-        float ray = sin(FragPos.x * 0.4 + time * 1.5) * cos(FragPos.z * 0.4 + time * 1.2) * 0.5 + 0.5;
-        vec3 rayColor = vec3(0.2, 0.5, 0.8) * ray * lightColor;
-        finalColor.rgb += rayColor * 0.4;
-    }
-    
-    // Ultra mode: Subtle bloom approximation on bright areas
-    if (ultraMode == 1) {
-        float brightness = dot(finalColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-        if (brightness > 0.9) {
-            finalColor.rgb += (finalColor.rgb - vec3(0.9)) * 0.3;
-        }
-    }
-    
-    FragColor = finalColor;
+    FragColor = vec4(result, texColor.a);
 }
