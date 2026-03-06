@@ -437,18 +437,22 @@ void Chunk::generateMesh() {
                     uint8_t type = mask[u][v];
                     if (type != 0) {
                         int width = 1;
-                        while (u + width < CHUNK_SIZE && mask[u + width][v] == type) {
-                            width++;
+                        if (type != 5) { // DISALLOW greedy meshing for water to allow smooth waves
+                            while (u + width < CHUNK_SIZE && mask[u + width][v] == type) {
+                                width++;
+                            }
                         }
                         
                         int height = 1;
-                        bool done = false;
-                        while (v + height < CHUNK_SIZE) {
-                            for (int i = 0; i < width; ++i) {
-                                if (mask[u + i][v + height] != type) { done = true; break; }
+                        if (type != 5) { // DISALLOW greedy meshing for water
+                            bool done = false;
+                            while (v + height < CHUNK_SIZE) {
+                                for (int i = 0; i < width; ++i) {
+                                    if (mask[u + i][v + height] != type) { done = true; break; }
+                                }
+                                if (done) break;
+                                height++;
                             }
-                            if (done) break;
-                            height++;
                         }
                         
                         int x, y, z;

@@ -41,17 +41,21 @@ void main() {
 
     vec3 wPos = vec3(model * vec4(aPos, 1.0));
     
-    // Water wave effect (only in advanced water mode)
+    // Improved Water Wave (Smoother transition across chunk boundaries)
     if (waterMode == 1 && aColor.a > 0.65 && aColor.a < 0.75) {
         if (aNormal.y > 0.5) {
-            wPos.y += sin(wPos.x * 2.5 + time * 0.8) * 0.05 + cos(wPos.z * 2.0 + time * 0.6) * 0.05;
+            float wave = sin(wPos.x * 0.8 + time * 1.5) * 0.04 + 
+                         cos(wPos.z * 1.2 + time * 1.2) * 0.04 +
+                         sin((wPos.x + wPos.z) * 0.5 + time * 2.0) * 0.02;
+            wPos.y += wave;
         }
     }
     
     // Leaves wind effect
     if (enableLeafWind == 1 && aColor.a > 0.8 && aColor.a < 0.9) {
-        wPos.x += sin(wPos.y * 2.0 + time * 0.6) * 0.03;
-        wPos.z += cos(wPos.y * 2.0 + time * 0.6) * 0.03;
+        float wind = sin(wPos.y * 1.5 + time * 2.0) * 0.05 * sin(time * 0.5);
+        wPos.x += wind;
+        wPos.z += wind * 0.5;
     }
 
     FragPos = wPos;
