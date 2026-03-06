@@ -54,6 +54,10 @@ struct ChunkColumn {
     unsigned int opaqueCount = 0;
     unsigned int transparentCount = 0;
     
+    // VRAM slot size tracking for in-place reuse
+    unsigned int allocatedVerts = 0;   // How many verts the VRAM slot can hold
+    unsigned int allocatedInds = 0;    // How many indices the VRAM slot can hold
+    
     bool needsUpdate = false;
     bool inVRAM = false;
     

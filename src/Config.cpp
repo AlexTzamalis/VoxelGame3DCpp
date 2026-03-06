@@ -46,6 +46,9 @@ namespace Config {
     bool enableClouds = true;
     float cloudHeight = 200.0f;
     float cloudScale = 0.0008f;
+    float cloudSpeed = 0.06f;  // Slow gentle drift
+    float saturation = 0.85f;  // Toned down for realism
+    float contrast = 1.05f;    // Slightly more punch
     
     GameMode currentMode = GameMode::CREATIVE;
     GameState currentState = GameState::MAIN_MENU;
@@ -76,6 +79,9 @@ namespace Config {
                 else if (key == "ENABLE_CLOUDS") file >> enableClouds;
                 else if (key == "CLOUD_HEIGHT") file >> cloudHeight;
                 else if (key == "CLOUD_SCALE") file >> cloudScale;
+                else if (key == "CLOUD_SPEED") file >> cloudSpeed;
+                else if (key == "SATURATION") file >> saturation;
+                else if (key == "CONTRAST") file >> contrast;
                 else if (key == "PLAYER_SPEED") file >> playerSpeed;
                 else if (key == "SPRINT_SPEED") file >> playerSprintSpeed;
                 else if (key == "SENSITIVITY") file >> mouseSensitivity;
@@ -105,6 +111,9 @@ namespace Config {
                  << "ENABLE_CLOUDS " << enableClouds << "\n"
                  << "CLOUD_HEIGHT " << cloudHeight << "\n"
                  << "CLOUD_SCALE " << cloudScale << "\n"
+                 << "CLOUD_SPEED " << cloudSpeed << "\n"
+                 << "SATURATION " << saturation << "\n"
+                 << "CONTRAST " << contrast << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"
                  << "SPRINT_SPEED " << playerSprintSpeed << "\n"
                  << "SENSITIVITY " << mouseSensitivity << "\n";

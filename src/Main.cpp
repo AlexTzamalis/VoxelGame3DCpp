@@ -433,20 +433,28 @@ int main() {
             }
 
             // PASS 1: SHADOW MAP RENDERING
-            float shadowDist = Config::renderDistance * 16.0f; 
+            float shadowDist = std::min(Config::renderDistance * 16.0f, 256.0f); // Cap shadow distance  
             glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
             
-            // Shadow light position: GLOBAL, snapped to chunk grid for stability
-            // Use camera Y so shadows actually cover the terrain the player sees
-            glm::vec3 lightTarget = glm::vec3(
-                std::floor(camera.position().x / 16.0f) * 16.0f,
-                camera.position().y,
-                std::floor(camera.position().z / 16.0f) * 16.0f
-            );
+            // Shadow light target follows camera smoothly
+            glm::vec3 lightTarget = camera.position();
             glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
             
             glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
             glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+            
+            // TEXEL SNAPPING: Prevents shadow flickering/shimmer when camera moves
+            // Snap the shadow map origin to texel boundaries so shadows don't shift sub-pixel
+            {
+                glm::vec4 shadowOrigin = lightSpaceMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                shadowOrigin *= SHADOW_WIDTH / 2.0f;
+                glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+                glm::vec4 roundOffset = roundedOrigin - shadowOrigin;
+                roundOffset /= SHADOW_WIDTH / 2.0f;
+                lightProjection[3][0] += roundOffset.x;
+                lightProjection[3][1] += roundOffset.y;
+                lightSpaceMatrix = lightProjection * lightView;
+            }
 
             if (Config::enableShadows && Config::enableShaders) {
                 glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
@@ -571,6 +579,7 @@ int main() {
                 cloudShader.setFloat("time", timeVal);
                 cloudShader.setFloat("cloudHeight", Config::cloudHeight);
                 cloudShader.setFloat("cloudScale", Config::cloudScale);
+                cloudShader.setFloat("cloudSpeed", Config::cloudSpeed);
                 
                 glBindVertexArray(cloudVAO);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -871,6 +880,7 @@ int main() {
                     if (Config::enableClouds) {
                         ImGui::SliderFloat("Cloud Height", &Config::cloudHeight, 100.0f, 400.0f);
                         ImGui::SliderFloat("Cloud Scale", &Config::cloudScale, 0.0003f, 0.003f, "%.4f");
+                        ImGui::SliderFloat("Cloud Speed", &Config::cloudSpeed, 0.01f, 0.5f, "%.3f");
                     }
                     
                     ImGui::SeparatorText("Lighting & Atmosphere");
