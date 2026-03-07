@@ -10,8 +10,9 @@ namespace Config {
     int fpsCap = 240;
     bool vsync = false;
 
-    float playerSpeed = 10.0f;
-    float playerSprintSpeed = 15.0f;
+    float playerSpeed = 4.317f;
+    float playerSprintSpeed = 5.6f;
+    float playerSneakSpeed = 1.3f;
     float mouseSensitivity = 0.1f;
     float cameraFov = 75.0f;
     float zoomBaseFov = 30.0f;

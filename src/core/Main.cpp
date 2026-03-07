@@ -117,9 +117,10 @@ namespace {
     void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
         if (Config::currentState != GameState::PLAYING) return;
         
-        if (action == GLFW_PRESS && globalChunkManager != nullptr) {
+        if (action == GLFW_PRESS && globalChunkManager != nullptr && !playerInventory.isVisible) {
             glm::ivec3 hitPos, prevPos;
-            if (raycast(camera.position(), camera.front(), 8.0f, hitPos, prevPos)) {
+            float reach = (Config::currentMode == GameMode::SURVIVAL) ? 5.0f : 8.0f;
+            if (raycast(camera.position(), camera.front(), reach, hitPos, prevPos)) {
                 if (button == GLFW_MOUSE_BUTTON_LEFT) {
                     globalChunkManager->setVoxelGlobal(hitPos.x, hitPos.y, hitPos.z, 1); // Delete (Set Air)
                 } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
@@ -163,13 +164,17 @@ namespace {
 
         float speed = Config::playerSpeed;
         
-        // Sprint: L-Ctrl by default — makes you run/fly faster + FOV boost
-        bool sprinting = InputManager::isPressed(InputAction::SPRINT, window);
-        if (sprinting) {
+        bool sneaking = InputManager::isPressed(InputAction::DESCEND, window) && Config::currentMode == GameMode::SURVIVAL;
+        bool sprinting = InputManager::isPressed(InputAction::SPRINT, window) && !sneaking;
+        
+        if (sneaking) {
+            speed = Config::playerSneakSpeed;
+        } else if (sprinting) {
             speed = Config::playerSprintSpeed;
             // Extra boost when flying
             if (Config::currentMode != GameMode::SURVIVAL) speed *= 2.0f;
         }
+        
         camera.setSprinting(sprinting);
 
         // Zoom toggle (hold key)
@@ -178,15 +183,17 @@ namespace {
         // Horizontal movement always uses horizon-aligned front (XZ plane)
         // This prevents the camera pitch from affecting walk/fly speed
         glm::vec3 moveFront = glm::normalize(glm::vec3(camera.front().x, 0, camera.front().z));
+        glm::vec3 inputDir(0.0f);
 
-        if (InputManager::isPressed(InputAction::MOVE_FORWARD, window))
-            camera.addVelocity(moveFront * speed);
-        if (InputManager::isPressed(InputAction::MOVE_BACK, window))
-            camera.addVelocity(-moveFront * speed);
-        if (InputManager::isPressed(InputAction::MOVE_LEFT, window))
-            camera.addVelocity(-camera.right() * speed);
-        if (InputManager::isPressed(InputAction::MOVE_RIGHT, window))
-            camera.addVelocity(camera.right() * speed);
+        if (InputManager::isPressed(InputAction::MOVE_FORWARD, window)) inputDir += moveFront;
+        if (InputManager::isPressed(InputAction::MOVE_BACK, window)) inputDir -= moveFront;
+        if (InputManager::isPressed(InputAction::MOVE_LEFT, window)) inputDir -= camera.right();
+        if (InputManager::isPressed(InputAction::MOVE_RIGHT, window)) inputDir += camera.right();
+        
+        if (glm::length(inputDir) > 0.01f) {
+            inputDir = glm::normalize(inputDir);
+            camera.addVelocity(inputDir * speed);
+        }
             
         if (Config::currentMode != GameMode::SURVIVAL) {
             // Flying: Space = up, Shift = down (Minecraft creative controls)
@@ -246,6 +253,12 @@ namespace {
     void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
         if (Config::currentState != GameState::PLAYING) return;
         
+        // Let ImGui capture mouse entirely if inventory is open
+        if (playerInventory.isVisible) {
+            firstMouse = true;
+            return;
+        }
+        
         if (firstMouse) {
             lastX = static_cast<float>(xpos);
             lastY = static_cast<float>(ypos);
@@ -255,7 +268,6 @@ namespace {
         float dy = lastY - static_cast<float>(ypos);
         lastX = static_cast<float>(xpos);
         lastY = static_cast<float>(ypos);
-        if (playerInventory.isVisible) return; // Freeze view if managing inventory!
         
         camera.rotate(dx * Config::mouseSensitivity, dy * Config::mouseSensitivity);
     }
@@ -362,6 +374,26 @@ int main() {
         glfwTerminate();
         return -1;
     }
+    
+    Shader solidShader("shaders/solid.vert", "shaders/solid.frag");
+    
+    // --- Set up wireframe block outline ---
+    unsigned int outlineVao, outlineVbo;
+    glGenVertexArrays(1, &outlineVao);
+    glGenBuffers(1, &outlineVbo);
+    
+    float outlineVertices[] = {
+        0,0,0, 1,0,0,  1,0,0, 1,0,1,  1,0,1, 0,0,1,  0,0,1, 0,0,0, // Bottom
+        0,1,0, 1,1,0,  1,1,0, 1,1,1,  1,1,1, 0,1,1,  0,1,1, 0,1,0, // Top
+        0,0,0, 0,1,0,  1,0,0, 1,1,0,  1,0,1, 1,1,1,  0,0,1, 0,1,1  // Columns
+    };
+    
+    glBindVertexArray(outlineVao);
+    glBindBuffer(GL_ARRAY_BUFFER, outlineVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(outlineVertices), outlineVertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
 
     std::cerr << "[Trace] Building Texture Atlas...\n";
     if (!TextureAtlas::build("assets/texture_packs/default.zip")) {
@@ -603,9 +635,35 @@ int main() {
                 camera.updateFrustum();
             }
 
-            // Pass the actual ID of the shader, and the camera so it can perform visibility testing bounds!
             chunkManager.render(shader.id(), camera);
             
+            // Render Target Block Outline
+            if (Config::currentState == GameState::PLAYING && !playerInventory.isVisible) {
+                glm::ivec3 targetPos, tmpPos;
+                float reach = (Config::currentMode == GameMode::SURVIVAL) ? 5.0f : 8.0f;
+                if (raycast(camera.position(), camera.front(), reach, targetPos, tmpPos)) {
+                    solidShader.use();
+                    solidShader.setMat4("view", camera.viewMatrix());
+                    solidShader.setMat4("projection", camera.projectionMatrix());
+                    
+                    glm::mat4 outlineModel = glm::mat4(1.0f);
+                    outlineModel = glm::translate(outlineModel, glm::vec3(targetPos));
+                    outlineModel = glm::translate(outlineModel, glm::vec3(-0.005f));
+                    outlineModel = glm::scale(outlineModel, glm::vec3(1.01f));
+                    
+                    solidShader.setMat4("model", outlineModel);
+                    solidShader.setVec4("color", glm::vec4(0.0f, 0.0f, 0.0f, 0.6f));
+                    
+                    glDisable(GL_DEPTH_TEST);
+                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                    glLineWidth(2.5f);
+                    glBindVertexArray(outlineVao);
+                    glDrawArrays(GL_LINES, 0, 24);
+                    glBindVertexArray(0);
+                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                    glEnable(GL_DEPTH_TEST);
+                }
+            }
             // Render Player (hands/legs always visible; head/body hidden in 1st person internally)
             {
                 playerShader.use();

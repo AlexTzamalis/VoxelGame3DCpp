@@ -29,6 +29,7 @@ namespace Config {
     // Player & Controls Settings
     extern float playerSpeed;
     extern float playerSprintSpeed;
+    extern float playerSneakSpeed;
     extern float mouseSensitivity;
     extern float cameraFov;
     extern float zoomBaseFov;        // Default zoom FOV target (adjustable via scroll)
