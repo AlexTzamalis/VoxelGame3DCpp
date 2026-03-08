@@ -53,9 +53,28 @@ public:
     int getTerrainHeight(float noiseVal) const override;
 };
 
-class MountainBiome : public Biome {
+class ForestBiome : public Biome {
 public:
-    MountainBiome() : Biome("Extreme Mountains", 4 /*Stone*/, 4 /*Stone*/, 1, TreeType::PINE) {}
+    ForestBiome() : Biome("Forest", 2, 3, 22, TreeType::OAK) {}
+};
+
+class JungleBiome : public Biome {
+public:
+    JungleBiome() : Biome("Jungle", 2, 3, 40, TreeType::OAK) {}
+};
+
+class DeepOceanBiome : public Biome {
+public:
+    DeepOceanBiome() : Biome("Deep Ocean", 9, 9, 0, TreeType::NONE) {}
+    int getTerrainHeight(float noiseVal) const override {
+        float n01 = (noiseVal + 1.0f) * 0.5f;
+        return static_cast<int>(n01 * 15.0f) + 12;
+    }
+};
+
+class ExtremeMountainBiome : public Biome {
+public:
+    ExtremeMountainBiome() : Biome("Extreme Mountains", 4, 4, 1, TreeType::PINE) {}
     int getTerrainHeight(float noiseVal) const override;
 };
 

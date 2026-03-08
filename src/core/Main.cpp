@@ -6,6 +6,7 @@
 #include "world/ChunkManager.hpp"
 #include "core/Config.hpp"
 #include "world/WorldManager.hpp"
+#include "world/BlockRegistry.hpp"
 #include "game/Inventory.hpp"
 #include "game/InputManager.hpp"
 #include <GL/glew.h>
@@ -33,6 +34,7 @@ namespace {
     Camera camera(glm::vec3(0.0f, 120.0f, 5.0f));
     ChunkManager* globalChunkManager = nullptr;
     Inventory playerInventory;
+    char createWorldNameBuf[64] = "New World 1";
 
     bool raycast(glm::vec3 start, glm::vec3 direction, float maxDistance, glm::ivec3& hitPos, glm::ivec3& prevPos) {
         // Fast Voxel Traversal (DDA) Algorithm by Amanatides & Woo
@@ -136,6 +138,7 @@ namespace {
     }
 
     void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+        if (height == 0 || width == 0) return; // Prevent aspect ratio division by zero / assertion failure on minimize!
         glViewport(0, 0, width, height);
         Config::windowWidth = width;
         Config::windowHeight = height;
@@ -276,6 +279,7 @@ namespace {
 int main() {
     InputManager::init();
     WorldManager::init();
+    BlockRegistry::init();
     Config::load(); // Load global user settings on start!
 
     if (!glfwInit()) {
@@ -287,7 +291,21 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(Config::windowWidth, Config::windowHeight, "Voxel Game 3D", nullptr, nullptr);
+    GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
+    
+    // Automatically clamp to Native if we don't have proper resolution config
+    if (Config::windowWidth == 1280 && Config::isFullscreen) {
+        Config::windowWidth = mode->width;
+        Config::windowHeight = mode->height;
+    }
+
+    GLFWwindow* window = nullptr;
+    if (Config::isFullscreen) {
+        window = glfwCreateWindow(Config::windowWidth, Config::windowHeight, "Voxel Game 3D", primaryMonitor, nullptr);
+    } else {
+        window = glfwCreateWindow(Config::windowWidth, Config::windowHeight, "Voxel Game 3D", nullptr, nullptr);
+    }
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -465,7 +483,7 @@ int main() {
         ImGui::NewFrame();
         
         if (Config::currentState == GameState::PLAYING) {
-            chunkManager.update(camera.position());
+            chunkManager.update(camera);
         }
 
         if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED || Config::currentState == GameState::COMMAND_INPUT) {
@@ -580,15 +598,17 @@ int main() {
             shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
             shader.setFloat("saturation", Config::saturation);
             shader.setFloat("contrast", Config::contrast);
+
+            // Dynamic Fog scaling for Distant Horizons
+            float fogE = float(Config::renderDistance + Config::lodDistance) * 16.0f;
+            if (!Config::enableLOD) fogE = float(Config::renderDistance + 1) * 16.0f;
             
-            // Render Fog Distances
-            float renderDistBlocks = Config::renderDistance * 16.0f;
             if (isUnderwater) {
                 shader.setFloat("fogStart", 0.0f);
-                shader.setFloat("fogEnd", 24.0f); // Quick fade when exploring oceans
+                shader.setFloat("fogEnd", 24.0f);
             } else {
-                shader.setFloat("fogStart", renderDistBlocks - 32.0f); // Minimalistic chunk-loading fog on the X-Z border
-                shader.setFloat("fogEnd", renderDistBlocks);
+                shader.setFloat("fogStart", fogE * 0.85f);
+                shader.setFloat("fogEnd", fogE);
             }
 
             shader.setVec3("lightDir", shaderLightDir);
@@ -605,9 +625,10 @@ int main() {
             if (Config::currentState == GameState::PLAYING) {
                 // Determine if chunk we are inside is fully generated
                 int cx = std::floor(camera.position().x / Chunk::CHUNK_SIZE);
+                int cy = std::floor(camera.position().y / Chunk::CHUNK_SIZE);
                 int cz = std::floor(camera.position().z / Chunk::CHUNK_SIZE);
                 
-                bool isLoaded = chunkManager.isChunkColumnLoaded(cx, cz);
+                bool isLoaded = chunkManager.isChunkColumnLoaded(cx, cy, cz);
                 if (isLoaded || camera.position().y > 80.0f) { // Added height bypass to not get stuck above generation!
                     // Safe to apply gravity and collision sweeps without sinking into void
                     auto checkCollisionCall = [&](glm::vec3 minB, glm::vec3 maxB) -> bool {
@@ -635,7 +656,7 @@ int main() {
                 camera.updateFrustum();
             }
 
-            chunkManager.render(shader.id(), camera);
+            chunkManager.render(shader.id(), camera, false, fogE);
             
             // Render Target Block Outline
             if (Config::currentState == GameState::PLAYING && !playerInventory.isVisible) {
@@ -826,40 +847,74 @@ int main() {
 
         // GUI Rendering
         if (Config::currentState == GameState::MAIN_MENU) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 150, Config::windowHeight / 2.0f - 150), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(300, 240), ImGuiCond_Always);
-            ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-            if (ImGui::Button("Singleplayer", ImVec2(280, 40))) {
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 180), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400, 320), ImGuiCond_Always);
+            ImGui::Begin("Voxel Game 3D", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+            
+            ImGui::SetCursorPosY(20);
+            ImGui::SetWindowFontScale(1.5f);
+            float titleWidth = ImGui::CalcTextSize("ANTIGRAVITY VOXEL").x;
+            ImGui::SetCursorPosX((400 - titleWidth) * 0.5f);
+            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "ANTIGRAVITY VOXEL");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
+            
+            float btnX = (400 - 320) * 0.5f;
+            ImGui::SetCursorPosX(btnX);
+            if (ImGui::Button("Singleplayer", ImVec2(320, 50))) {
                 Config::currentState = GameState::WORLD_SELECT;
             }
-            if (ImGui::Button("Settings", ImVec2(280, 40))) {
+            ImGui::Spacing();
+            ImGui::SetCursorPosX(btnX);
+            if (ImGui::Button("Settings", ImVec2(320, 50))) {
                 Config::currentState = GameState::SETTINGS;
             }
+            ImGui::Spacing(); ImGui::Spacing();
             ImGui::Separator();
-            if (ImGui::Button("Quit Game", ImVec2(280, 40))) {
+            ImGui::Spacing(); ImGui::Spacing();
+            ImGui::SetCursorPosX(btnX);
+            if (ImGui::Button("Quit Game", ImVec2(320, 50))) {
                 Config::save();
                 glfwSetWindowShouldClose(window, true);
             }
             ImGui::End();
         } 
         else if (Config::currentState == GameState::WORLD_SELECT) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Always);
-            ImGui::Begin("Select World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 350, Config::windowHeight / 2.0f - 250), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_Always);
+            ImGui::Begin("Select World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+            
+            ImGui::SetCursorPosY(10);
+            ImGui::SetWindowFontScale(1.2f);
+            float selTitleWidth = ImGui::CalcTextSize("SELECT WORLD").x;
+            ImGui::SetCursorPosX((700 - selTitleWidth) * 0.5f);
+            ImGui::Text("SELECT WORLD");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
             
             auto worlds = WorldManager::getSavedWorlds();
             
-            ImGui::BeginChild("WorldList", ImVec2(0, 280), true);
+            ImGui::BeginChild("WorldList", ImVec2(0, 360), true);
             if (worlds.empty()) {
+                ImGui::SetCursorPosY(150);
+                float emptyW = ImGui::CalcTextSize("No worlds found. Create a new one!").x;
+                ImGui::SetCursorPosX((680 - emptyW) * 0.5f);
                 ImGui::TextDisabled("No worlds found. Create a new one!");
             } else {
                 for (const auto& w : worlds) {
-                    if (ImGui::TreeNodeEx(w.displayName.c_str(), ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
-                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Mode: %d | Type: %d | Time Played: %llds", (int)w.mode, w.worldType, w.timePlayedSeconds);
-                        ImGui::SameLine(ImGui::GetWindowWidth() - 100);
+                    ImGui::PushID(w.folderName.c_str());
+                    std::string treeLabel = w.displayName + "##" + w.folderName;
+                    
+                    if (ImGui::TreeNodeEx(treeLabel.c_str(), ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
+                        std::string modeStr = (w.mode == GameMode::SURVIVAL) ? "Survival" : ((w.mode == GameMode::CREATIVE) ? "Creative" : "Spectator");
+                        std::string typeStr = (w.worldType == 1) ? "Flat" : ((w.worldType == 3) ? "V2" : "V1");
+                        int mins = w.timePlayedSeconds / 60;
+                        int hrs = mins / 60; mins = mins % 60;
+
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Mode: %-10s | Type: %-4s | Time Played: %dh %dm", modeStr.c_str(), typeStr.c_str(), hrs, mins);
+                        ImGui::SameLine(ImGui::GetWindowWidth() - 140);
                         
-                        std::string playLabel = "Play##" + w.folderName;
-                        if (ImGui::Button(playLabel.c_str(), ImVec2(80, 25))) {
+                        if (ImGui::Button("PLAY WORLD", ImVec2(120, 30))) {
                             chunkManager.clear();
                             WorldManager::loadWorld(w.folderName);
                             
@@ -878,51 +933,83 @@ int main() {
                             firstMouse = true;
                         }
                     }
+                    ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
             ImGui::EndChild();
             
-            if (ImGui::Button("Create New World", ImVec2(230, 40))) {
+            ImGui::Spacing();
+            ImGui::SetCursorPosX(110);
+            if (ImGui::Button("Create New World", ImVec2(220, 45))) {
+                // Determine next "New World N" name
+                int nextId = 1;
+                bool nameExists = true;
+                std::string propName;
+                while (nameExists) {
+                    propName = "New World " + std::to_string(nextId);
+                    nameExists = false;
+                    for (const auto& w : worlds) {
+                        if (w.displayName == propName || w.folderName == propName) {
+                            nameExists = true; break;
+                        }
+                    }
+                    if (nameExists) nextId++;
+                }
+                snprintf(createWorldNameBuf, sizeof(createWorldNameBuf), "%s", propName.c_str());
                 Config::currentState = GameState::CREATE_WORLD;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Back to Menu", ImVec2(230, 40))) {
+            ImGui::SetCursorPosX(370);
+            if (ImGui::Button("Back to Menu", ImVec2(220, 45))) {
                 Config::currentState = GameState::MAIN_MENU;
             }
             ImGui::End();
         }
         else if (Config::currentState == GameState::CREATE_WORLD) {
-            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 200, Config::windowHeight / 2.0f - 180), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(400, 340), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(Config::windowWidth / 2.0f - 250, Config::windowHeight / 2.0f - 200), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Always);
             ImGui::Begin("Create New World", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             
-            static char worldName[64] = "My Beautiful World";
-            ImGui::InputText("World Name", worldName, IM_ARRAYSIZE(worldName));
+            ImGui::Spacing();
+            ImGui::InputText("World Name", createWorldNameBuf, IM_ARRAYSIZE(createWorldNameBuf));
             
-            static int seed = 1337;
-            ImGui::InputInt("Seed", &seed);
+            static char seedBuf[64] = "";
+            ImGui::InputText("Seed (Leave empty for random)", seedBuf, IM_ARRAYSIZE(seedBuf));
             
             static int selectedMode = 1; // 0: Survival, 1: Creative, 2: Spectator
             ImGui::Combo("Game Mode", &selectedMode, "Survival\0Creative\0Spectator\0");
             
-            static int selectedTerrain = 0; // 0: Default, 1: Flat, 2: Skyblock
-            ImGui::Combo("Terrain Type", &selectedTerrain, "Default\0Flat World\0Skyblock\0");
+            static int selectedTerrain = 3; // 0: Default(V1), 1: Flat, 2: Skyblock, 3: V2
+            ImGui::Combo("Terrain Type", &selectedTerrain, "Default (V1)\0Flat World\0Skyblock\0WorldGen V2\0");
             
             ImGui::Separator();
             
             if (ImGui::Button("Create & Play!", ImVec2(380, 40))) {
                 auto newMode = (selectedMode == 0) ? GameMode::SURVIVAL : ((selectedMode == 1) ? GameMode::CREATIVE : GameMode::SPECTATOR);
                 
+                int parsedSeed;
+                std::string seedStr(seedBuf);
+                if (seedStr.empty()) {
+                    parsedSeed = static_cast<int>(getCurrentTimeMs() & 0x7FFFFFFF); // Random positive int based on time
+                } else {
+                    try {
+                        parsedSeed = std::stoi(seedStr);
+                    } catch (...) {
+                        parsedSeed = static_cast<int>(std::hash<std::string>{}(seedStr) & 0x7FFFFFFF);
+                    }
+                }
+                
                 WorldMetadata newMeta;
-                newMeta.displayName = std::string(worldName);
+                newMeta.displayName = std::string(createWorldNameBuf);
                 if (newMeta.displayName.empty()) newMeta.displayName = "Unnamed_World";
                 
                 // Keep file names path safe
                 newMeta.folderName = newMeta.displayName; 
                 std::replace(newMeta.folderName.begin(), newMeta.folderName.end(), ' ', '_'); 
-                newMeta.folderName += "_" + std::to_string(std::abs(seed));
+                newMeta.folderName += "_" + std::to_string(std::abs(parsedSeed));
                 
-                newMeta.seed = seed;
+                newMeta.seed = parsedSeed;
                 newMeta.mode = newMode;
                 newMeta.worldType = selectedTerrain;
                 newMeta.creationDate = getCurrentTimeMs();
@@ -964,8 +1051,30 @@ int main() {
             if (ImGui::BeginTabBar("SettingsTabs")) {
                 if (ImGui::BeginTabItem("Video")) {
                     ImGui::Spacing();
+                    
+                    bool prevFs = Config::isFullscreen;
+                    if (ImGui::Checkbox("Fullscreen Mode", &Config::isFullscreen)) {
+                        GLFWmonitor* primary = glfwGetPrimaryMonitor();
+                        const GLFWvidmode* mod = glfwGetVideoMode(primary);
+                        if (Config::isFullscreen) {
+                            glfwSetWindowMonitor(window, primary, 0, 0, mod->width, mod->height, mod->refreshRate);
+                        } else {
+                            glfwSetWindowMonitor(window, nullptr, 100, 100, 1280, 720, 0);
+                        }
+                    }
+                    
                     ImGui::SliderInt("Render Distance", &Config::renderDistance, 4, 32);
                     ImGui::SliderInt("Vertical Distance", &Config::renderDistanceY, 2, 10);
+                    
+                    ImGui::SeparatorText("Level of Detail (LOD)");
+                    ImGui::Checkbox("Enable LOD (Distant Horizons)", &Config::enableLOD);
+                    if (Config::enableLOD) {
+                        ImGui::SliderInt("LOD View Distance", &Config::lodDistance, 8, 128);
+                        ImGui::SliderInt("LOD Quality (Lower is better)", &Config::lodQuality, 1, 8);
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Higher quality uses more CPU during generation");
+                    }
+                    
+                    ImGui::SeparatorText("Performance");
                     ImGui::SliderInt("Max FPS (0=Unlimited)", &Config::fpsCap, 0, 500);
                     ImGui::Checkbox("VSync", &Config::vsync);
                     if (ImGui::SliderFloat("FOV", &Config::cameraFov, 60.0f, 110.0f)) {

@@ -1,4 +1,5 @@
 #include "renderer/TextureAtlas.hpp"
+#include "world/BlockRegistry.hpp"
 #include "stb_image.h"
 #include <GL/glew.h>
 #include <filesystem>
@@ -27,6 +28,12 @@ bool TextureAtlas::build(const std::string& directoryPath) {
         
         std::string cmd = "tar -xf \"" + directoryPath + "\" -C \"" + tempExtractDir + "\"";
         if (std::system(cmd.c_str()) != 0) return false;
+    }
+
+    if (isZip) {
+        BlockRegistry::loadBlockStates(tempExtractDir + "/assets");
+    } else {
+        BlockRegistry::loadBlockStates(path + "/assets");
     }
 
     struct ImageData {
@@ -68,6 +75,28 @@ bool TextureAtlas::build(const std::string& directoryPath) {
             }
         }
     }
+    
+    // Fallback Texture explicitly created so we never crash!
+    ImageData missingTex;
+    missingTex.name = "missing_texture";
+    missingTex.path = "";
+    missingTex.width = maxTileExt;
+    missingTex.height = maxTileExt;
+    missingTex.channels = 4;
+    missingTex.isGui = false;
+    missingTex.data = new unsigned char[maxTileExt * maxTileExt * 4];
+    for (int y = 0; y < maxTileExt; ++y) {
+        for (int x = 0; x < maxTileExt; ++x) {
+            bool isMagenta = ((x / (maxTileExt/2)) + (y / (maxTileExt/2))) % 2 == 0;
+            int idx = (y * maxTileExt + x) * 4;
+            missingTex.data[idx + 0] = isMagenta ? 255 : 0;
+            missingTex.data[idx + 1] = 0;
+            missingTex.data[idx + 2] = isMagenta ? 255 : 0;
+            missingTex.data[idx + 3] = 255;
+        }
+    }
+    images.push_back(missingTex);
+    
     std::cerr << "Total images loaded: " << images.size() << "\n";
 
     if (atlasTextureId) glDeleteTextures(1, &atlasTextureId);
@@ -150,7 +179,7 @@ float TextureAtlas::getUV(const std::string& textureName) {
     if (it != textureLayers.end()) {
         return it->second;
     }
-    return 0.0f; // Fallback layer
+    return textureLayers["missing_texture"]; 
 }
 
 unsigned int TextureAtlas::getTextureID() {
@@ -158,69 +187,12 @@ unsigned int TextureAtlas::getTextureID() {
 }
 
 float TextureAtlas::getUVForBlock(uint8_t blockType, int faceDir) {
-    std::string request = "debug";
+    auto& block = BlockRegistry::getBlock(blockType);
+    std::string request = block.name; // default
 
-    switch(blockType) {
-        case 2: // Grass Block
-            if (faceDir == 2) request = "grass_block_top";
-            else if (faceDir == 3) request = "dirt";
-            else request = "grass_block_side";
-            break;
-        case 3: // Dirt
-            request = "dirt";
-            break;
-        case 4: // Stone
-            request = "stone";
-            break;
-        case 5: // Water
-            request = "water_still";
-            break;
-        case 6: // Wood Trunk
-            if (faceDir == 2 || faceDir == 3) request = "oak_log_top";
-            else request = "oak_log";
-            break;
-        case 7: // Leaves
-            request = "oak_leaves";
-            break;
-        case 8: // Coal Ore
-            request = "coal_ore";
-            break;
-        case 9: // Sand
-            request = "sand";
-            break;
-        case 10: // Snow
-            request = "snow";
-            break;
-        case 11: // Snowy Grass
-            if (faceDir == 2) request = "snow";
-            else if (faceDir == 3) request = "dirt";
-            else request = "grass_block_snow";
-            break;
-        case 12: // Bedrock
-            request = "bedrock";
-            break;
-        case 13: // Iron
-            request = "iron_ore";
-            break;
-        case 14: // Gold
-            request = "gold_ore";
-            break;
-        case 15: // Diamond
-            request = "diamond_ore";
-            break;
-        case 16: // Lapis
-            request = "lapis_ore";
-            break;
-        case 17: // Deepslate
-            request = "deepslate";
-            break;
-        case 18: // Redstone
-            request = "redstone_ore";
-            break;
-        default:
-            request = "debug";
-            break;
-    }
-    
+    if (faceDir == 2) request = block.texTop;
+    else if (faceDir == 3) request = block.texBottom;
+    else request = block.texSide;
+
     return getUV(request);
 }

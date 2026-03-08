@@ -3,8 +3,7 @@
 
 int Biome::getTerrainHeight(float noiseVal) const {
     float n01 = (noiseVal + 1.0f) * 0.5f;
-    n01 = std::pow(n01, 1.25f);
-    return static_cast<int>(n01 * 90.0f) + 40; // 40 to 130
+    return static_cast<int>(n01 * 40.0f) + 65; // Much flatter base (65-105)
 }
 
 int OceanBiome::getTerrainHeight(float noiseVal) const {
@@ -14,36 +13,38 @@ int OceanBiome::getTerrainHeight(float noiseVal) const {
     return static_cast<int>(n01 * 25.0f) + 10;
 }
 
-int MountainBiome::getTerrainHeight(float noiseVal) const {
-    // Extreme mountains!
+int ExtremeMountainBiome::getTerrainHeight(float noiseVal) const {
     float n01 = (noiseVal + 1.0f) * 0.5f;
-    n01 = std::pow(n01, 0.9f); // sharper peaks
-    return static_cast<int>(n01 * 180.0f) + 50; // up to 230!
+    n01 = std::pow(n01, 1.15f); // Smooth peaks
+    return static_cast<int>(n01 * 120.0f) + 90; // Up to 210
 }
 
-const Biome* BiomeManager::getBiome(float heightNoise, float tempNoise) {
+const Biome* BiomeManager::getBiome(float continentalNoise, float tempNoise) {
     static PlainsBiome plains;
+    static ForestBiome forest;
     static DesertBiome desert;
-    static SnowBiome snow;
+    static SnowBiome tundra;
     static TaigaBiome taiga;
     static OceanBiome ocean;
-    static MountainBiome mountain;
+    static DeepOceanBiome deepOcean;
+    static JungleBiome jungle;
+    static ExtremeMountainBiome mountain;
 
-    if (heightNoise < -0.4f) {
-        return &ocean;
-    }
-    else if (heightNoise > 0.6f) {
-        return &mountain;
-    }
-    else {
-        if (tempNoise > 0.4f) {
-            return &desert;
-        } else if (tempNoise < -0.4f) {
-            return &taiga;
-        } else if (tempNoise < -0.2f) {
-            return &snow;
-        } else {
-            return &plains; // Default
-        }
-    }
+    // 1. Continental Placement (Macro Scale)
+    if (continentalNoise < -0.65f) return &deepOcean;
+    if (continentalNoise < -0.35f) return &ocean;
+    
+    // 2. Mountains (Extreme Peaks)
+    if (continentalNoise > 0.82f) return &mountain;
+    
+    // 3. Temperature & Humidity based Biomes
+    if (tempNoise > 0.6f) return &desert;
+    if (tempNoise > 0.25f) return &jungle;
+    if (tempNoise < -0.5f) return &tundra;
+    if (tempNoise < -0.2f) return &taiga;
+    
+    // Forests vs Plains (Transition zone)
+    if (continentalNoise > 0.2f) return &forest;
+    
+    return &plains; 
 }

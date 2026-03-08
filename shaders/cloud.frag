@@ -8,9 +8,9 @@ uniform vec3 lightDir;
 uniform vec3 lightColor;
 uniform vec3 skyColor;
 uniform float time;
-uniform float cloudHeight;    // Base altitude of clouds
-uniform float cloudScale;     // Overall noise scale
-uniform float cloudSpeed;     // Wind speed
+uniform float cloudHeight;    
+uniform float cloudScale;     
+uniform float cloudSpeed;     
 
 float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -29,106 +29,110 @@ float noise3D(vec3 x) {
 float fbm3D(vec3 p) {
     float f = 0.0;
     float weight = 0.5;
-    for(int i = 0; i < 4; i++) {
+    for(int i = 0; i < 5; i++) {
         f += weight * noise3D(p);
-        p *= 2.5;
-        weight *= 0.4;
+        p *= 2.4;
+        weight *= 0.45;
     }
     return f;
 }
 
 vec2 getCloudDensity(vec3 p) {
-    float thickness = 40.0; // depth of the cloud layer
-    float heightFract = (p.y - cloudHeight) / thickness;
+    float thickness = 100.0;
+    float hFract = (p.y - cloudHeight) / thickness;
+    float verticalShape = smoothstep(0.0, 0.15, hFract) * smoothstep(1.0, 0.45, hFract);
     
-    // Smooth bottom edge and rounded pillowy top
-    float verticalShape = smoothstep(0.0, 0.15, heightFract) * smoothstep(1.0, 0.4, heightFract);
-    
-    // Wind animation
-    vec3 windOffset = vec3(time * cloudSpeed * 2.0, 0.0, time * cloudSpeed * 1.0);
-    vec3 sampleCoord = (p + windOffset) * cloudScale * 0.04;
+    vec3 windOffset = vec3(time * cloudSpeed * 15.0, 0.0, time * cloudSpeed * 8.0);
+    vec3 sampleCoord = (p + windOffset) * cloudScale * 0.35;
     
     float noiseRaw = fbm3D(sampleCoord);
+    noiseRaw = mix(noiseRaw, fbm3D(sampleCoord * 3.5 + p * 0.02), 0.2);
     
-    // Cloud coverage threshold (determines sky coverage vs patchiness)
-    float coverage = 0.6; // Higher = less clouds
+    float coverage = 0.45; 
+    float density = max(0.0, noiseRaw - coverage) * 4.0; 
     
-    float density = max(0.0, noiseRaw - coverage) * 3.0; // Boost density mathematically
     return vec2(density * verticalShape, noiseRaw);
+}
+
+vec3 getSkyColorVal(vec3 dir) {
+    vec3 sunD = normalize(lightDir);
+    float zenith = max(dir.y, 0.0);
+    float sunDot = max(dot(dir, sunD), 0.0);
+
+    vec3 zenithColor = vec3(0.05, 0.2, 0.5);
+    vec3 horizonColor = vec3(0.4, 0.6, 0.8);
+    vec3 skyBase = mix(horizonColor, zenithColor, pow(zenith, 0.5));
+    
+    float sunsetFactor = clamp(1.0 - sunD.y, 0.0, 1.0);
+    vec3 sunsetGlow = vec3(1.0, 0.45, 0.1) * pow(1.0 - abs(dir.y), 3.0) * sunsetFactor;
+    
+    float nightFactor = smoothstep(0.1, -0.3, sunD.y);
+    vec3 sky = skyBase + sunsetGlow;
+    sky = mix(sky, vec3(0.005, 0.008, 0.02), nightFactor);
+    
+    return sky;
 }
 
 void main() {
     vec4 clipPos = vec4(ScreenUV * 2.0 - 1.0, 1.0, 1.0);
     vec4 worldDir = invViewProj * clipPos;
     vec3 rayDir = normalize(worldDir.xyz / worldDir.w - cameraPos);
+
+    vec3 baseSky = getSkyColorVal(rayDir);
+    if (rayDir.y < -0.01) { FragColor = vec4(baseSky, 1.0); return; }
     
-    // Early exit if looking downwards
-    if (rayDir.y < 0.01) discard;
-    
-    // Cloud layer bounds
     float t_bottom = (cloudHeight - cameraPos.y) / rayDir.y;
-    float cloudThickness = 40.0;
-    float t_top = ((cloudHeight + cloudThickness) - cameraPos.y) / rayDir.y;
+    float thickness = 100.0;
+    float t_top = ((cloudHeight + thickness) - cameraPos.y) / rayDir.y;
     
-    if (t_bottom < 0.0 || t_top < 0.0) discard;
+    if (t_bottom < 0.0 && t_top < 0.0) { FragColor = vec4(baseSky, 1.0); return; }
     
     float t = max(0.0, t_bottom);
     float t_end = t_top;
-    
-    // Limit horizon draw distance for performance
-    float maxDist = 3000.0;
-    if (t > maxDist) discard;
+    float maxDist = 4500.0;
+    if (t > maxDist) { FragColor = vec4(baseSky, 1.0); return; }
     t_end = min(t_end, maxDist);
     
-    int steps = 24; 
-    float stepSize = (t_end - t) / float(steps);
+    int stepsValue = 24; 
+    float stepSize = (t_end - t) / float(stepsValue);
+    float ditherVal = fract(sin(dot(ScreenUV.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    t += stepSize * ditherVal;
     
-    // Randomize starting ray step to eliminate banding
-    float dither = fract(sin(dot(ScreenUV.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    t += stepSize * dither;
-    
-    float totalDensity = 0.0;
-    float lightTransmittance = 1.0;
-    vec3 cloudColor = vec3(0.0);
-    
-    vec3 sunDir = normalize(lightDir);
-    float sunScattering = pow(max(dot(rayDir, sunDir), 0.0), 16.0) * 0.5;
-    
-    // Raymarching Loop
-    for (int i = 0; i < steps; i++) {
-        if (t > t_end || lightTransmittance < 0.01) break;
-        
+    float transmittance = 1.0;
+    vec3 cloudColorVal = vec3(0.0);
+    vec3 sunD = normalize(lightDir);
+    float sunsetFact = clamp(1.0 - sunD.y, 0.0, 1.0);
+
+    for (int i = 0; i < stepsValue; i++) {
+        if (t > t_end || transmittance < 0.01) break;
         vec3 p = cameraPos + rayDir * t;
         vec2 dns = getCloudDensity(p);
         float density = dns.x;
         
-        if (density > 0.01) {
-            // Sample density slightly towards the sun for self-shadowing
-            float densSun = getCloudDensity(p + sunDir * 10.0).x;
-            float sunLight = clamp(exp(-densSun * 2.0), 0.0, 1.0);
+        if (density > 0.001) {
+            float densSun = getCloudDensity(p + sunD * 12.0).x;
+            float sunLight = exp(-densSun * 1.5);
             
-            // Base ambient light vs direct sun
-            vec3 ambient = mix(vec3(0.45, 0.5, 0.6), skyColor, 0.3); // Ambient
-            vec3 direct = lightColor * sunLight * (1.0 + sunScattering);
-            vec3 localColor = ambient + direct;
+            // Henyey-Greenstein Silver Lining
+            float g = 0.85; 
+            float cosTheta = dot(rayDir, sunD);
+            float hg = (1.0 - g*g) / pow(1.0 + g*g - 2.0*g*cosTheta, 1.5);
             
-            // Beer's law integration
-            float transmittance = exp(-density * stepSize * 0.05); // extinction coeff
-            float alpha = (1.0 - transmittance) * lightTransmittance;
+            vec3 sunCol = mix(lightColor, vec3(1.0, 0.45, 0.1), sunsetFact);
+            vec3 amb = mix(vec3(0.3, 0.4, 0.6), skyColor, 0.4); 
             
-            cloudColor += localColor * alpha;
-            lightTransmittance *= transmittance;
-            totalDensity += density * stepSize;
+            vec3 direct = sunCol * sunLight * (hg * 0.5 + 0.3) * 3.5;
+            vec3 localCol = mix(amb, direct, density * 0.8);
+            
+            float alpha = (1.0 - exp(-density * stepSize * 0.12)) * transmittance;
+            cloudColorVal += localCol * alpha;
+            transmittance *= exp(-density * stepSize * 0.12);
         }
-        
         t += stepSize;
     }
     
-    if (totalDensity < 0.01) discard;
-    
-    // Edge horizon fade
-    float distSq = t * t;
-    float fade = smoothstep(maxDist*maxDist, (maxDist*0.3)*(maxDist*0.3), distSq);
-    
-    FragColor = vec4(cloudColor, (1.0 - lightTransmittance) * fade);
+    float horizonFade = smoothstep(0.0, 0.12, rayDir.y);
+    float distanceFade = smoothstep(maxDist, maxDist * 0.3, t);
+    vec3 res = mix(baseSky, cloudColorVal, (1.0 - transmittance) * distanceFade * horizonFade);
+    FragColor = vec4(res, 1.0);
 }

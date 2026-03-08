@@ -23,6 +23,7 @@ namespace Config {
     // Window & Display Settings
     extern int windowWidth;
     extern int windowHeight;
+    extern bool isFullscreen;
     extern int fpsCap;
     extern bool vsync;
 
@@ -38,6 +39,11 @@ namespace Config {
     extern int renderDistance;
     extern int renderDistanceY;
     extern bool frustumCulling;
+
+    // LOD & Distant Horizons
+    extern bool enableLOD;
+    extern int lodDistance;
+    extern int lodQuality; // Step size (1 = High, 2 = Med, 4 = Low, 8 = Lowest)
 
     // === Granular Shader Settings ===
     // Master toggle

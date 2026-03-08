@@ -7,6 +7,7 @@
 namespace Config {
     int windowWidth = 1280;
     int windowHeight = 720;
+    bool isFullscreen = true;
     int fpsCap = 240;
     bool vsync = false;
 
@@ -18,8 +19,12 @@ namespace Config {
     float zoomBaseFov = 30.0f;
 
     int renderDistance = 12;
-    int renderDistanceY = 10;
+    int renderDistanceY = 4;
     bool frustumCulling = true;
+
+    bool enableLOD = true;
+    int lodDistance = 256; // 4km horizon
+    int lodQuality = 2;   // High detail distant terrain (8x8 grid)
     
     // Master shader toggle
     bool enableShaders = true;
@@ -36,7 +41,7 @@ namespace Config {
     bool enableFog = true;
     float fogDensity = 0.005f;
     bool enableDirectionalFaceShading = true;
-    float ambientBrightness = 0.25f;  // Brighter nights
+    float ambientBrightness = 0.35f;  // Brighter, richer environment lighting
     float dayTimeSpeed = 0.0021816f;
     
     // Wind
@@ -47,9 +52,9 @@ namespace Config {
     
     // Clouds
     bool enableClouds = true;
-    float cloudHeight = 200.0f;
+    float cloudHeight = 150.0f;
     float cloudScale = 0.0008f;
-    float cloudSpeed = 0.06f;  // Slow gentle drift
+    float cloudSpeed = 0.015f;  // Photon-like slow drift
     float saturation = 0.85f;  // Toned down for realism
     float contrast = 1.05f;    // Slightly more punch
     
@@ -85,9 +90,13 @@ namespace Config {
             while(file >> key) {
                 if (key == "RENDER_DISTANCE") file >> renderDistance;
                 else if (key == "RENDER_DISTANCE_Y") file >> renderDistanceY;
+                else if (key == "ENABLE_LOD") file >> enableLOD;
+                else if (key == "LOD_DISTANCE") file >> lodDistance;
+                else if (key == "LOD_QUALITY") file >> lodQuality;
                 else if (key == "FOV") file >> cameraFov;
                 else if (key == "MAX_FPS") file >> fpsCap;
                 else if (key == "VSYNC") file >> vsync;
+                else if (key == "IS_FULLSCREEN") file >> isFullscreen;
                 else if (key == "ENABLE_SHADERS") file >> enableShaders;
                 else if (key == "ENABLE_SHADOWS") file >> enableShadows;
                 else if (key == "SHADOW_INTENSITY") file >> shadowIntensity;
@@ -119,9 +128,13 @@ namespace Config {
         if (file.is_open()) {
             file << "RENDER_DISTANCE " << renderDistance << "\n"
                  << "RENDER_DISTANCE_Y " << renderDistanceY << "\n"
+                 << "ENABLE_LOD " << enableLOD << "\n"
+                 << "LOD_DISTANCE " << lodDistance << "\n"
+                 << "LOD_QUALITY " << lodQuality << "\n"
                  << "FOV " << cameraFov << "\n"
                  << "MAX_FPS " << fpsCap << "\n"
                  << "VSYNC " << vsync << "\n"
+                 << "IS_FULLSCREEN " << isFullscreen << "\n"
                  << "ENABLE_SHADERS " << enableShaders << "\n"
                  << "ENABLE_SHADOWS " << enableShadows << "\n"
                  << "SHADOW_INTENSITY " << shadowIntensity << "\n"
