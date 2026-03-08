@@ -30,6 +30,7 @@ uniform int waterMode;
 uniform int ultraMode;
 uniform float saturation;
 uniform float contrast;
+uniform mat4 lightSpaceMatrix;
 
 // --- ACES Film Tone Mapping ---
 vec3 ACESFilm(vec3 x) {
@@ -70,7 +71,7 @@ float PCSS(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
     if(avgBlockerDepth == -1.0) return 0.0;
     float penumbraSize = (zReceiver - avgBlockerDepth) / avgBlockerDepth;
     float filterRadius = clamp(penumbraSize * 0.1, 0.001, 0.02);
-    float shadow = 0.0;
+    float shadowCount = 0.0;
     const int SAMPLES = 16;
     vec2 PoissonDisk[16] = vec2[](
         vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
@@ -84,44 +85,73 @@ float PCSS(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
     );
     for(int i = 0; i < SAMPLES; i++) {
         float d = texture(shadowMap, projCoords.xy + PoissonDisk[i] * filterRadius).r;
-        if(zReceiver - bias > d) shadow += 1.0;
+        if(zReceiver - bias > d) shadowCount += 1.0;
     }
-    return (shadow / float(SAMPLES)) * shadowIntensity;
+    return (shadowCount / float(SAMPLES)) * shadowIntensity;
 }
 
-// --- Photon Sky Model (Simplified Atmospheric Scattering) ---
-vec3 getPhotonSky(vec3 dir, vec3 sunDir) {
-    float sunDot = dot(dir, sunDir);
+// --- Photon-Inspired Atmospheric Scattering ---
+vec3 getSkyColor(vec3 dir) {
+    vec3 sunD = normalize(lightDir);
     float zenith = max(dir.y, 0.0);
+    float sunDot = max(dot(dir, sunD), 0.0);
+    float sunsetFact = clamp(1.0 - sunD.y, 0.0, 1.0);
+
+    // Rayleigh scattering (Blue sky)
+    vec3 zenithCol = vec3(0.01, 0.1, 0.4);
+    vec3 horizonCol = vec3(0.4, 0.6, 0.9);
+    vec3 skyBase = mix(horizonCol, zenithCol, pow(zenith, 0.6));
     
-    // Rayleigh scattering approximation
-    vec3 sky = mix(vec3(0.15, 0.25, 0.5), vec3(0.05, 0.4, 0.9), zenith);
-    // Sunset/Sunrise horizon
-    float horizon = 1.0 - abs(dir.y);
-    vec3 sunset = vec3(1.0, 0.25, 0.05) * pow(horizon, 4.0) * max(sunDir.y + 0.2, 0.0) * 0.8;
+    // Ozone Absorption (Adds the distinct twilight 'purple' and deep blue)
+    vec3 ozone = vec3(0.5, 0.1, 0.02) * sunsetFact * pow(1.0-zenith, 8.0);
     
-    // Sun Disk
-    float sun = smoothstep(0.998, 0.999, sunDot);
-    vec3 sunColor = vec3(1.0, 0.9, 0.7) * 2.0;
+    // Mie scattering & Sunset Glow
+    vec3 sunsetGlow = vec3(1.0, 0.4, 0.1) * pow(1.0 - abs(dir.y), 4.0) * sunsetFact;
     
-    return sky + sunset + sun * sunColor;
+    // Henyey-Greenstein Phase for Sun Glow
+    float g = 0.8; // Forward scattering factor
+    float hg = (1.0 - g*g) / pow(1.0 + g*g - 2.0*g*sunDot, 1.5);
+    vec3 sunGlowCol = vec3(1.0, 0.9, 0.8) * hg * 0.15;
+    
+    // Solar Disc
+    float sunDisc = smoothstep(0.9985, 0.9992, sunDot) * 12.0;
+    vec3 sunCol = mix(vec3(1.0, 0.98, 0.9), vec3(1.0, 0.35, 0.1), sunsetFact);
+    
+    vec3 finalSky = skyBase + sunsetGlow - ozone + sunGlowCol + sunDisc * sunCol;
+    
+    // Night transition
+    float nightFact = smoothstep(0.05, -0.25, sunD.y);
+    finalSky = mix(finalSky, vec3(0.002, 0.005, 0.015), nightFact);
+    
+    return max(vec3(0.0), finalSky);
+}
+
+float reflectNoise(vec3 p) {
+    return fract(sin(dot(p.xz, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
-    float distance = length(FragPos - cameraPos);
+    float distValue = length(FragPos - cameraPos);
     vec3 viewDir = normalize(cameraPos - FragPos);
-    vec3 sunDir = normalize(lightDir);
+    vec3 SD = normalize(lightDir);
 
     vec4 texColor = texture(textureAtlas, TexCoord);
     if (texColor.a < 0.1) discard;
     
-    // Smooth Water (VertexColor contains AO)
+    // Smooth Water (VertexColor channels ID)
     bool isWater = (VertexColor.a > 0.65 && VertexColor.a < 0.75);
-    texColor *= VertexColor;
+    texColor.rgb *= VertexColor.rgb;
     
+    // Photon Water - Volumetric Extinction (Beer-Lambert)
     if (isWater && waterMode == 1) {
-        texColor.rgb *= vec3(0.15, 0.45, 0.8); 
-        texColor.a = 0.82; // Slightly more opaque to hide "void" gaps if any
+        float depth = distValue; 
+        // Real physical absorption coefficients for water
+        vec3 absorption = vec3(0.4, 0.07, 0.02) * 0.8; 
+        vec3 haze = vec3(0.02, 0.1, 0.2); // Scattering/Murkiness
+        
+        vec3 extinction = exp(-absorption * depth * 0.08);
+        texColor.rgb = mix(haze, vec3(0.1, 0.4, 0.5), extinction); 
+        texColor.a = 0.96; 
     }
 
     vec3 N = normalize(Normal);
@@ -135,77 +165,103 @@ void main() {
     }
     
     // --- Photon Ambient ---
-    vec3 ambient;
+    vec3 ambientVal;
     if (enableShaders == 1) {
         float skySide = clamp(0.5 + 0.5 * N.y, 0.0, 1.0);
         vec3 hemi = mix(vec3(0.04, 0.05, 0.06), skyColor * 0.7, skySide);
-        ambient = hemi * (ultraMode == 1 ? 0.5 : 0.4);
-        ambient = max(ambient, vec3(ambientBrightness));
+        ambientVal = hemi * (ultraMode == 1 ? 0.5 : 0.4);
+        ambientVal = max(ambientVal, vec3(ambientBrightness));
     } else {
-        ambient = vec3(max(0.45, ambientBrightness));
+        ambientVal = vec3(max(0.45, ambientBrightness));
     }
     
     // --- Diffuse ---
-    float diff = max(dot(N, sunDir), 0.0);
-    if (ultraMode == 1) diff = mix(diff, diff * 0.4 + 0.6, 0.1); // Soft wrap
-    vec3 diffuse = diff * lightColor;
+    float diffValue = max(dot(N, SD), 0.0);
+    if (ultraMode == 1) diffValue = mix(diffValue, diffValue * 0.4 + 0.6, 0.1); // Soft wrap
+    vec3 diffuseValue = diffValue * lightColor;
     
     // --- Shadows ---
-    float shadow = 0.0;
+    float shadowValue = 0.0;
     if (enableShadows == 1) {
-        if (ultraMode == 1 && distance < 150.0) {
-            shadow = PCSS(FragPosLightSpace, N, sunDir);
+        if (ultraMode == 1 && distValue < 150.0) {
+            shadowValue = PCSS(FragPosLightSpace, N, SD);
         } else {
             vec3 projCoords = FragPosLightSpace.xyz / FragPosLightSpace.w * 0.5 + 0.5;
-            float bias = max(0.002 * (1.0 - dot(N, sunDir)), 0.0008);
-            if (texture(shadowMap, projCoords.xy).r < projCoords.z - bias) shadow = 0.6;
-            shadow *= shadowIntensity;
+            float biasValue = max(0.002 * (1.0 - dot(N, SD)), 0.0008);
+            if (texture(shadowMap, projCoords.xy).r < projCoords.z - biasValue) shadowValue = 0.75 * shadowIntensity;
         }
     }
     
-    vec3 result = (ambient + (1.0 - shadow) * diffuse) * texColor.rgb * faceMul;
+    // --- Volumetric Sunrays ---
+    vec3 volumetricRays = vec3(0.0);
+    if (enableShadows == 1 && ultraMode == 1 && isUnderwater == 0 && !isWater) {
+        int stepsValue = 8;
+        vec3 rayStep = (FragPos - cameraPos) / float(stepsValue);
+        vec3 currentPos = cameraPos;
+        float scatterValue = max(dot(viewDir, SD), 0.0);
+        float miePhase = pow(scatterValue, 16.0) * 0.6 + 0.1;
+
+        for (int i = 0; i < stepsValue; ++i) {
+            currentPos += rayStep;
+            vec4 lSpace = lightSpaceMatrix * vec4(currentPos, 1.0);
+            vec3 proj = lSpace.xyz / lSpace.w * 0.5 + 0.5;
+            if (proj.z < 1.0 && texture(shadowMap, proj.xy).r >= proj.z - 0.001) {
+                volumetricRays += lightColor * miePhase;
+            }
+        }
+        volumetricRays /= float(stepsValue);
+    }
     
-    // --- Water Specular & Fresnel ---
+    vec3 resultColor = (ambientVal + (1.0 - shadowValue) * diffuseValue) * texColor.rgb * faceMul;
+    resultColor += volumetricRays * 0.15; 
+    
+    // --- Water Overhaul ---
     if (isWater && waterMode == 1) {
-        vec3 reflectDir = reflect(-sunDir, N);
-        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 256.0);
-        result += lightColor * spec * 0.8;
-        
-        if (ultraMode == 1) {
-            float fresnel = pow(1.0 - max(dot(viewDir, N), 0.0), 5.0);
-            vec3 skyRefl = skyColor * 0.5; 
-            result = mix(result, skyRefl, fresnel * 0.4);
+        vec3 waterN = N;
+        if (N.y > 0.9) {
+            float w1 = sin(FragPos.x * 1.5 + time * 1.2) * cos(FragPos.z * 1.5 + time * 0.8);
+            float w2 = sin(FragPos.x * 4.0 - time * 2.2) * cos(FragPos.z * 3.5 - time * 1.8);
+            waterN = normalize(vec3(w1 * 0.03 + w2 * 0.01, 1.0, w1 * 0.02 + w2 * 0.015));
         }
+        vec3 reflectDir = reflect(-viewDir, waterN);
+        float specValue = pow(max(dot(reflectDir, SD), 0.0), 512.0) * 4.0;
+        float fresnelValue = 0.02 + 0.98 * pow(1.0 - max(dot(viewDir, waterN), 0.0), 5.0);
+        
+        vec3 skyRefl = getSkyColor(reflectDir);
+        // Add subtle cloud procedural variation to reflection
+        float cr = reflectNoise(FragPos + reflectDir * 100.0);
+        skyRefl = mix(skyRefl, skyRefl * 1.2, smoothstep(0.4, 0.6, cr) * 0.2);
+
+        resultColor = mix(resultColor, skyRefl, fresnelValue * 0.85);
+        resultColor += lightColor * specValue * (1.0 - shadowValue) * lightColor;
     }
     
-    // --- Grading ---
-    if (enableShaders == 1) {
-        result = mix(vec3(0.5), result, contrast);
-        float lum = dot(result, vec3(0.2126, 0.7152, 0.0722));
-        result = mix(vec3(lum), result, saturation);
-        result = ACESFilm(result * 1.05);
-    }
-    
-    // --- Fog (Photon Style) ---
+    // --- Fog (Synced with LOD Distance) ---
     if (enableFog == 1) {
-        float fogFactor = smoothstep(fogStart, fogEnd, distance);
-        if (ultraMode == 1) {
-            float heightFog = exp(-max(FragPos.y - 64.0, 0.0) * 0.015);
-            fogFactor = mix(fogFactor, 1.0, heightFog * fogFactor * 0.3);
-        }
-        result = mix(result, skyColor, fogFactor);
-    }
-    
-    // --- Underwater ---
-    if (isUnderwater == 1) {
-        vec3 underwaterBlue = vec3(0.05, 0.2, 0.6);
-        float depthFog = 1.0 - exp(-distance * 0.02);
-        result = mix(result * vec3(0.3, 0.7, 1.0), underwaterBlue, depthFog);
+        float fogFactorValue = smoothstep(fogStart, fogEnd, distValue);
         
-        // Caustics / Ray effects
-        float rays = sin(FragPos.x * 0.4 + time * 1.2) * cos(FragPos.z * 0.4 + time * 1.2);
-        if (rays > 0.0) result += vec3(0.02, 0.1, 0.2) * rays;
+        // Atmospheric scattering integrated into fog
+        vec3 targetFogColor = getSkyColor(-viewDir); 
+        
+        // Underwater murky fog override
+        if (isUnderwater == 1) {
+            vec3 waterFog = vec3(0.01, 0.1, 0.2);
+            float uDist = clamp(distValue * 0.08, 0.0, 1.0);
+            resultColor = mix(resultColor, waterFog, uDist);
+            targetFogColor = waterFog;
+            fogFactorValue = max(fogFactorValue, uDist);
+        }
+        
+        resultColor = mix(resultColor, targetFogColor, fogFactorValue);
     }
     
-    FragColor = vec4(result, texColor.a);
+    // --- Tonemapping & Contrast ---
+    if (enableShaders == 1) {
+        resultColor = mix(vec3(0.5), resultColor, contrast);
+        float lumValue = dot(resultColor, vec3(0.2126, 0.7152, 0.0722));
+        resultColor = mix(vec3(lumValue), resultColor, saturation);
+        resultColor = ACESFilm(resultColor * 1.05);
+    }
+    
+    FragColor = vec4(resultColor, texColor.a);
 }

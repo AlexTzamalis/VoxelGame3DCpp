@@ -32,6 +32,7 @@ public:
     bool isModified_ = false;
 
     void generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise);
+    void generateTerrainV2();
     void generateMesh();
     // Mesh data access for ChunkColumn
     const std::vector<VoxelVertex>& getVertices() const { return vertices_; }
@@ -43,7 +44,8 @@ public:
 private:
     int getIndex(int x, int y, int z) const;
     bool isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int dy, int dz) const;
-    void addFace(int x, int y, int z, int dir, uint8_t type, int width, int height);
+    void addFace(int x, int y, int z, int dir, uint8_t type, int width, int height, float temp = 0.5f, float hum = 0.5f);
+    void addCrossFace(int x, int y, int z, uint8_t type, float temp = 0.5f, float hum = 0.5f);
 
     glm::ivec3 position_;
     std::vector<uint8_t> voxels_;

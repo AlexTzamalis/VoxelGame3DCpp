@@ -73,6 +73,7 @@ add_executable(VoxelGame3D
     src/world/ChunkManager.cpp
     src/world/WorldManager.cpp
     src/world/Biome.cpp
+    src/world/BlockRegistry.cpp
     src/game/Inventory.cpp
     src/game/InputManager.cpp
     ${IMGUI_DIR}/imgui.cpp
@@ -89,6 +90,7 @@ target_include_directories(VoxelGame3D PRIVATE
     ${glm_SOURCE_DIR}
     ${glew_SOURCE_DIR}/include
     ${stb_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )

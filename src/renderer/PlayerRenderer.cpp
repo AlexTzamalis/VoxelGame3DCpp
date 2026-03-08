@@ -167,8 +167,8 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
 
     if (isFirstPerson) {
         // Push the rendered body slightly backwards in 1st person
-        // so looking down reveals the chest!
-        float pushOft = 3.0f * px;
+        // so looking down reveals the chest and feet, but without filling the screen
+        float pushOft = 2.0f * px;
         playerPos.x -= cos(glm::radians(camera.yaw())) * pushOft;
         playerPos.z -= sin(glm::radians(camera.yaw())) * pushOft;
     }
@@ -192,19 +192,16 @@ void PlayerRenderer::render(const Camera& camera, float time, glm::vec3 velocity
     if (!isFirstPerson) {
         // 0: Head (pivot neck, rot pitch)
         drawPart(0, glm::vec3(0, 24 * px, 0), glm::vec3(1, 0, 0), glm::radians(-camera.pitch()));
-        // 1: Body (pivot bottom)
-        drawPart(1, glm::vec3(0, 12 * px, 0), glm::vec3(1, 0, 0), 0.0f);
     }
     
+    // 1: Body (pivot bottom)
+    drawPart(1, glm::vec3(0, 12 * px, 0), glm::vec3(1, 0, 0), 0.0f);
     // 2: Right Arm (pivot shoulder) (+X)
     drawPart(2, glm::vec3(6 * px, 24 * px, 0), glm::vec3(1, 0, 0), -armSwing);
-    
     // 3: Left Arm (pivot shoulder) (-X)
     drawPart(3, glm::vec3(-6 * px, 24 * px, 0), glm::vec3(1, 0, 0), armSwing);
-    
     // 4: Right Leg (pivot hip) (+X)
     drawPart(4, glm::vec3(2 * px, 12 * px, 0), glm::vec3(1, 0, 0), legSwing);
-    
     // 5: Left Leg (pivot hip) (-X)
     drawPart(5, glm::vec3(-2 * px, 12 * px, 0), glm::vec3(1, 0, 0), -legSwing);
 }

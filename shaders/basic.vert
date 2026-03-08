@@ -17,6 +17,7 @@ uniform float time;
 uniform int enableShaders;
 uniform int waterMode;
 uniform int enableLeafWind;
+uniform vec3 cameraPos;
 
 void main() {
     uint dir = aData & 7u;
@@ -41,7 +42,7 @@ void main() {
 
     vec3 wPos = vec3(model * vec4(aPos, 1.0));
     
-    // Improved Water Wave (Smoother transition across chunk boundaries)
+    // Water Wave Animation
     if (waterMode == 1 && aColor.a > 0.65 && aColor.a < 0.75) {
         if (aNormal.y > 0.5) {
             float wave = sin(wPos.x * 0.8 + time * 1.5) * 0.04 + 

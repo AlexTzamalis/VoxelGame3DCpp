@@ -70,11 +70,11 @@ public:
     ChunkManager();
     ~ChunkManager();
 
-    void update(const glm::vec3& cameraPosition);
+    void update(const Camera& camera);
     void render(unsigned int shaderProgram, const Camera& camera, bool bypassFrustum = false, float radialDistLimit = -1.0f) const;
 
     void clear();
-    bool isChunkColumnLoaded(int cx, int cz) const;
+    bool isChunkColumnLoaded(int cx, int cy, int cz) const;
 
     uint8_t getVoxelGlobal(int x, int y, int z) const;
     void setVoxelGlobal(int x, int y, int z, uint8_t type);
@@ -102,6 +102,7 @@ private:
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;
     std::unordered_map<glm::ivec2, std::unique_ptr<ChunkColumn>, IVec2Hash> columns_;
+    std::unordered_map<glm::ivec2, std::unique_ptr<ChunkColumn>, IVec2Hash> lodColumns_;
 
     // Keeps track of chunks currently being generated so we don't start duplicate jobs
     std::unordered_map<glm::ivec3, bool, IVec3Hash> generatingChunks_;
@@ -115,5 +116,9 @@ private:
 
     // Chunks returning from workers that need buffer uploads
     std::vector<std::unique_ptr<Chunk>> readyChunks_;
+    std::vector<std::unique_ptr<ChunkColumn>> readyLODColumns_;
+    std::unordered_map<glm::ivec2, bool, IVec2Hash> generatingLODs_;
     std::mutex readyMutex_;
+    
+    std::unique_ptr<ChunkColumn> generateLODColumn(glm::ivec2 gridPos);
 };
