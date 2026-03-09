@@ -45,6 +45,7 @@ FetchContent_Declare(
 )
 FetchContent_Populate(glew)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 add_subdirectory(${glew_SOURCE_DIR}/build/cmake ${glew_BINARY_DIR})
 set_target_properties(glew_s PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
