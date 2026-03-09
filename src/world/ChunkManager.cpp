@@ -50,6 +50,22 @@ ChunkManager::~ChunkManager() {
 }
 
 void ChunkManager::workerThreadFunc() {
+    // 1. Base terrain height (Continents / Hills)
+    FastNoiseLite localHeightNoise;
+    localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+    localHeightNoise.SetSeed(Config::currentSeed); 
+    localHeightNoise.SetFrequency(0.005f);       
+    localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    localHeightNoise.SetFractalOctaves(5);      
+
+    // 2. Caverns - Natural FBm carving
+    FastNoiseLite localCaveNoise;
+    localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+    localCaveNoise.SetSeed(Config::currentSeed + 9999); 
+    localCaveNoise.SetFrequency(0.03f); 
+    localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    localCaveNoise.SetFractalOctaves(3); 
+
     while (isRunning_) {
         glm::ivec3 taskPos;
         {
@@ -61,23 +77,6 @@ void ChunkManager::workerThreadFunc() {
             taskPos = pendingTasks_.back();
             pendingTasks_.pop_back();
         }
-
-        // 1. Base terrain height (Continents / Hills)
-        FastNoiseLite localHeightNoise;
-        localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        // Bind dynamic world seed!
-        localHeightNoise.SetSeed(Config::currentSeed); 
-        localHeightNoise.SetFrequency(0.005f);       
-        localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-        localHeightNoise.SetFractalOctaves(5);      
-
-        // 2. Caverns - Natural FBm carving
-        FastNoiseLite localCaveNoise;
-        localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localCaveNoise.SetSeed(Config::currentSeed + 9999); 
-        localCaveNoise.SetFrequency(0.03f); 
-        localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-        localCaveNoise.SetFractalOctaves(3); 
 
         // Heavy Lifting off the main thread
         if (taskPos.y == 999999) {
@@ -185,10 +184,24 @@ void ChunkManager::update(const Camera& camera) {
     // Dynamic MDI refresh for frustum culling when camera moves/rotates
     static glm::vec3 lastCamPos = cameraPosition;
     static float lastYaw = camera.yaw();
-    if (glm::distance(cameraPosition, lastCamPos) > 0.1f || std::abs(lastYaw - camera.yaw()) > 0.05f) {
+    static float lastPitch = camera.pitch();
+    float dist = glm::distance(cameraPosition, lastCamPos);
+    float yawDiff = std::abs(lastYaw - camera.yaw());
+    float pitchDiff = std::abs(lastPitch - camera.pitch());
+
+    // Slightly higher tolerance for idle performance
+    // Force MDI rebuild when important settings change
+    static bool lastEnableShaders = Config::enableShaders;
+    if (Config::enableShaders != lastEnableShaders) {
+        mdiCommandsDirty_ = true;
+        lastEnableShaders = Config::enableShaders;
+    }
+
+    if (dist > 0.2f || yawDiff > 0.1f || pitchDiff > 0.1f) {
         mdiCommandsDirty_ = true;
         lastCamPos = cameraPosition;
         lastYaw = camera.yaw();
+        lastPitch = camera.pitch();
     }
 
     // Process ALL ready chunks - mesh gen already happened off-thread, this is just pointer moves
@@ -226,29 +239,54 @@ void ChunkManager::update(const Camera& camera) {
         std::floor(cameraPosition.z / Chunk::CHUNK_SIZE)
     );
 
-    // CRITICAL OPTIMIZATION: Only run the expensive O(n³) scan when camera moves to a new chunk
+    // --- Incremental Stateful Scanning ---
     if (cameraChunkPos != lastScanChunkPos_) {
         lastScanChunkPos_ = cameraChunkPos;
+        currentScanRadius_ = 0; // Restart expansion from center
         
-        // Build active set for unloading
-        std::unordered_set<glm::ivec3, IVec3Hash> activeKeys;
+        // Unload far chunks (Buffer + 1)
+        int cleanLimitSq = (Config::renderDistance + 1) * (Config::renderDistance + 1);
+        for (auto it = chunks_.begin(); it != chunks_.end(); ) {
+            int dx = it->first.x - cameraChunkPos.x;
+            int dz = it->first.z - cameraChunkPos.z;
+            if (dx*dx + dz*dz > cleanLimitSq || it->first.y < -12 || it->first.y > 36) {
+                if (it->second->isModified_) WorldManager::saveChunk(it->first, it->second->getVoxels());
+                glm::ivec2 cp(it->first.x, it->first.z);
+                if (columns_.count(cp)) columns_[cp]->needsUpdate = true;
+                it = chunks_.erase(it);
+            } else ++it;
+        }
+    }
+
+    // Process one radius ring per tick, but ONLY move forward if the ring is truly finished
+    if (currentScanRadius_ <= Config::renderDistance) {
         std::vector<glm::ivec3> newTasks;
+        int r = currentScanRadius_;
+        bool ringFinished = true;
+        int count = 0;
+        int cap = 64; // Faster loading for modern systems
 
-        for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
-            for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
-                if (x * x + z * z > Config::renderDistance * Config::renderDistance) continue;
-                // Generate FULL vertical columns to prevent void gaps and preserve bedrock/mountains
-                for (int gy = -8; gy <= 28; ++gy) {
-                    glm::ivec3 chunkPos = glm::ivec3(cameraChunkPos.x + x, gy, cameraChunkPos.z + z);
-                    activeKeys.insert(chunkPos);
+        for (int x = -r; x <= r && count < cap; ++x) {
+            for (int z = -r; z <= r && count < cap; ++z) {
+                if (std::abs(x) != r && std::abs(z) != r) continue;
+                if (x*x + z*z > Config::renderDistance * Config::renderDistance) continue;
 
-                    if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
-                        generatingChunks_[chunkPos] = true;
-                        newTasks.push_back(chunkPos);
+                bool colNeedsLoading = false;
+                for (int gy = -12; gy <= 28; ++gy) { // -192 to +448 blocks height range
+                    glm::ivec3 cp = cameraChunkPos + glm::ivec3(x, gy, z);
+                    if (chunks_.find(cp) == chunks_.end() && generatingChunks_.find(cp) == generatingChunks_.end()) {
+                        generatingChunks_[cp] = true;
+                        newTasks.push_back(cp);
+                        colNeedsLoading = true;
                     }
+                }
+                if (colNeedsLoading) {
+                    count++;
+                    ringFinished = false; // More to do in this ring
                 }
             }
         }
+        if (ringFinished) currentScanRadius_++;
         
         // Queue LOD Tasks
         // Spiral Search for LODs (Faster & better prioritization)
@@ -280,63 +318,46 @@ void ChunkManager::update(const Camera& camera) {
         
         if (!newTasks.empty()) {
             std::lock_guard<std::mutex> lock(queueMutex_);
-            // Efficient prioritization: Only sort the new batch to find closest ones
+            
+            // PRIORITY HEURISTIC: Prioritize chunks the camera is looking at
+            glm::vec3 lookDir = camera.front();
             std::sort(newTasks.begin(), newTasks.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
-                glm::vec3 pa = (a.y == 999999) ? glm::vec3(a.x, 64, a.z) : glm::vec3(a);
-                glm::vec3 pb = (b.y == 999999) ? glm::vec3(b.x, 64, b.z) : glm::vec3(b);
-                float distA = glm::distance(pa, cameraPosition);
-                float distB = glm::distance(pb, cameraPosition);
-                return distA > distB; // Closest at the back
+                glm::vec3 vA = glm::normalize(glm::vec3(a) - camera.position());
+                glm::vec3 vB = glm::normalize(glm::vec3(b) - camera.position());
+                float dOT_A = glm::dot(lookDir, vA);
+                float dOT_B = glm::dot(lookDir, vB);
+                
+                // If dot is similar, fall back to distance
+                if (std::abs(dOT_A - dOT_B) < 0.1f) {
+                    return glm::distance(glm::vec3(a), camera.position()) > glm::distance(glm::vec3(b), camera.position());
+                }
+                return dOT_A < dOT_B; // Larger dot product = more central = priority (back of vector)
             });
+            
             pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
             cv_.notify_all();
         }
-
-        // Unload chunks outside radius WITH HYSTERESIS to stop flickering
-        int thresholdH2 = (Config::renderDistance + 1) * (Config::renderDistance + 1);
-        int thresholdY = Config::renderDistanceY + 1;
-
-        for (auto it = chunks_.begin(); it != chunks_.end(); ) {
+    }
+        
+    // Unload far LODs
+    if (Config::enableLOD) {
+        int lodDistLimit = Config::renderDistance + Config::lodDistance + 4;
+        int lodThresholdLimitSq = lodDistLimit * lodDistLimit;
+        for (auto it = lodColumns_.begin(); it != lodColumns_.end(); ) {
             int dx = it->first.x - cameraChunkPos.x;
-            int dz = it->first.z - cameraChunkPos.z;
-            int py = it->first.y;
-
-            // Only unload if X/Z is outside radius, OR if vertical is ridiculously outside generated bounds
-            if (dx*dx + dz*dz > thresholdH2 || py < -12 || py > 32) {
-                if (it->second->isModified_) {
-                    WorldManager::saveChunk(it->first, it->second->getVoxels());
-                }
-                glm::ivec2 colPos(it->first.x, it->first.z);
-                if (columns_.find(colPos) != columns_.end()) {
-                    columns_[colPos]->needsUpdate = true;
-                }
-                it = chunks_.erase(it);
+            int dz = it->first.y - cameraChunkPos.z;
+            if (dx*dx + dz*dz > lodThresholdLimitSq) {
+                mdiCommandsDirty_ = true;
+                it = lodColumns_.erase(it);
             } else {
                 ++it;
             }
         }
-        
-        // Unload far LODs
-        if (Config::enableLOD) {
-            int lodDistLimit = Config::renderDistance + Config::lodDistance + 4;
-            int lodThresholdLimitSq = lodDistLimit * lodDistLimit;
-            for (auto it = lodColumns_.begin(); it != lodColumns_.end(); ) {
-                int dx = it->first.x - cameraChunkPos.x;
-                int dz = it->first.y - cameraChunkPos.z;
-                // Only unload if truly outside the radius
-                if (dx*dx + dz*dz > lodThresholdLimitSq) {
-                    mdiCommandsDirty_ = true;
-                    it = lodColumns_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
     }
 
-    // Column rebuilds - time-budgeted to prevent stutter
+    // Column rebuilds - time-budgeted tight to prevent any noticeable drops
     auto frameStart = std::chrono::high_resolution_clock::now();
-    const auto frameBudget = std::chrono::microseconds(12000); // 12ms max for rebuilds+uploads
+    const auto frameBudget = std::chrono::microseconds(6000); // 6ms tight budget
     
     for (auto it = columns_.begin(); it != columns_.end(); ) {
         if (it->second->needsUpdate) {
@@ -519,8 +540,9 @@ void ChunkManager::update(const Camera& camera) {
 }
 
 void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool bypassFrustum, float radialDistLimit) const {
-    glm::vec3 camPos = camera.position();
-    float limitSq = (radialDistLimit + 128.0f) * (radialDistLimit + 128.0f);
+    glm::vec3 camPos = camera.getRenderPosition();
+    // Use a very large buffer (512 blocks) to ensure we don't cut off visible geometry prematurely
+    float limitSq = (radialDistLimit + 512.0f) * (radialDistLimit + 512.0f);
 
     // Send global identity matrix once! 
     glm::mat4 globalModel = glm::mat4(1.0f);
@@ -541,10 +563,10 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
             float distZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
             if (distX*distX + distZ*distZ > limitSq) continue;
 
-            // Frustum Culling (Re-enabled with proper column alignment)
+            // Absolute maximum vertical bounds for insane mountain biomes (-384 to +768 blocks)
             if (Config::frustumCulling && !bypassFrustum) {
-                glm::vec3 min(pos.x * Chunk::CHUNK_SIZE, -128, pos.y * Chunk::CHUNK_SIZE);
-                glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 16, 256, pos.y * Chunk::CHUNK_SIZE + 16);
+                glm::vec3 min(pos.x * Chunk::CHUNK_SIZE - 4.0f, -384.0f, pos.y * Chunk::CHUNK_SIZE - 4.0f);
+                glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 20.0f, 768.0f, pos.y * Chunk::CHUNK_SIZE + 20.0f);
                 if (!camera.isBoxInFrustum(min, max)) continue;
             }
 
@@ -578,10 +600,10 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
                 float lodDistZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
                 if (lodDistX*lodDistX + lodDistZ*lodDistZ > limitSq) continue;
 
-                // Frustum Culling for LOD
+                // Frustum Culling for LOD with Edge Padding
                 if (Config::frustumCulling && !bypassFrustum) {
-                    glm::vec3 min(pos.x * Chunk::CHUNK_SIZE, -128, pos.y * Chunk::CHUNK_SIZE);
-                    glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 16, 256, pos.y * Chunk::CHUNK_SIZE + 16);
+                    glm::vec3 min(pos.x * Chunk::CHUNK_SIZE - 2.0f, -140.0f, pos.y * Chunk::CHUNK_SIZE - 2.0f);
+                    glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 18.0f, 270.0f, pos.y * Chunk::CHUNK_SIZE + 18.0f);
                     if (!camera.isBoxInFrustum(min, max)) continue;
                 }
 

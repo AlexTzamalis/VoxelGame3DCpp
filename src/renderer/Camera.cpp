@@ -223,7 +223,11 @@ void Camera::updateFrustum() {
 }
 
 bool Camera::isBoxInFrustum(const glm::vec3& min, const glm::vec3& max) const {
-    for (int i = 0; i < 6; i++) {
+    // Skip plane index 5 (Far plane) — it causes a visible straight horizontal
+    // cutaway line when looking at the horizon because it clips geometry in
+    // screen-space. Radial distance culling in ChunkManager already handles
+    // the maximum render distance, so the far plane is redundant here.
+    for (int i = 0; i < 5; i++) {
         glm::vec3 p = min;
         if (frustum_.planes[i].normal.x >= 0) p.x = max.x;
         if (frustum_.planes[i].normal.y >= 0) p.y = max.y;
