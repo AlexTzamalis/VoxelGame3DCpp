@@ -18,11 +18,11 @@ namespace Config {
     float cameraFov = 75.0f;
     float zoomBaseFov = 30.0f;
 
-    int renderDistance = 12;
+    int renderDistance = 16;
     int renderDistanceY = 4;
     bool frustumCulling = true;
 
-    bool enableLOD = true;
+    bool enableLOD = false;
     int lodDistance = 256; // 4km horizon
     int lodQuality = 2;   // High detail distant terrain (8x8 grid)
     
@@ -55,6 +55,9 @@ namespace Config {
     float cloudHeight = 150.0f;
     float cloudScale = 0.0008f;
     float cloudSpeed = 0.015f;  // Photon-like slow drift
+    float exposure = 1.0f;
+    float skyIntensity = 1.0f;
+    float waterOpacity = 0.85f;
     float saturation = 0.85f;  // Toned down for realism
     float contrast = 1.05f;    // Slightly more punch
     
@@ -112,6 +115,9 @@ namespace Config {
                 else if (key == "CLOUD_HEIGHT") file >> cloudHeight;
                 else if (key == "CLOUD_SCALE") file >> cloudScale;
                 else if (key == "CLOUD_SPEED") file >> cloudSpeed;
+                else if (key == "EXPOSURE") file >> exposure;
+                else if (key == "SKY_INTENSITY") file >> skyIntensity;
+                else if (key == "WATER_OPACITY") file >> waterOpacity;
                 else if (key == "SATURATION") file >> saturation;
                 else if (key == "CONTRAST") file >> contrast;
                 else if (key == "PLAYER_SPEED") file >> playerSpeed;
@@ -150,6 +156,9 @@ namespace Config {
                  << "CLOUD_HEIGHT " << cloudHeight << "\n"
                  << "CLOUD_SCALE " << cloudScale << "\n"
                  << "CLOUD_SPEED " << cloudSpeed << "\n"
+                 << "EXPOSURE " << exposure << "\n"
+                 << "SKY_INTENSITY " << skyIntensity << "\n"
+                 << "WATER_OPACITY " << waterOpacity << "\n"
                  << "SATURATION " << saturation << "\n"
                  << "CONTRAST " << contrast << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"

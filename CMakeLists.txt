@@ -1,15 +1,5 @@
-cmake_minimum_required(VERSION 3.16...4.1)
+cmake_minimum_required(VERSION 3.16)
 project(VoxelGame3D LANGUAGES CXX C)
-
-# Allow deprecation warning for FetchContent_Populate to be suppressed in CMake > 3.28
-if(POLICY CMP0169)
-    cmake_policy(SET CMP0169 OLD)
-endif()
-
-# Prevent timestamp warning when downloading GLEW via URL
-if(POLICY CMP0135)
-    cmake_policy(SET CMP0135 NEW)
-endif()
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -41,7 +31,8 @@ FetchContent_MakeAvailable(glm)
 # GLEW (OpenGL loader) - use build/cmake subdir
 FetchContent_Declare(
     glew
-    URL https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0.zip
+    GIT_REPOSITORY https://github.com/nigels-com/glew.git
+    GIT_TAG glew-2.2.0
 )
 FetchContent_Populate(glew)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
@@ -56,63 +47,76 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
-# ImGui
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
+# Dear ImGui
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.91.0
+)
+FetchContent_MakeAvailable(imgui)
+
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+target_include_directories(imgui PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+    ${glfw_SOURCE_DIR}/include
+)
+
+target_link_libraries(imgui PUBLIC
+    glfw
+    OpenGL::GL
+)
 
 # Executable
 add_executable(VoxelGame3D
     src/core/Main.cpp
     src/core/Config.cpp
     src/core/stb_image_impl.cpp
-    src/renderer/Shader.cpp
+
     src/renderer/Camera.cpp
+    src/renderer/Shader.cpp
     src/renderer/Texture.cpp
     src/renderer/TextureAtlas.cpp
     src/renderer/PlayerRenderer.cpp
+
     src/world/Chunk.cpp
     src/world/ChunkManager.cpp
     src/world/WorldManager.cpp
     src/world/Biome.cpp
     src/world/BlockRegistry.cpp
+
     src/game/Inventory.cpp
     src/game/InputManager.cpp
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
 target_include_directories(VoxelGame3D PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${glm_SOURCE_DIR}
     ${glew_SOURCE_DIR}/include
     ${stb_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
 )
 
 target_link_libraries(VoxelGame3D PRIVATE
     glfw
     glew_s
     OpenGL::GL
+    imgui
 )
 
-# Statically link MinGW runtime (libstdc++, libgcc, libwinpthread) so no DLLs are needed
-if(MINGW)
-    target_link_options(VoxelGame3D PRIVATE -static-libgcc -static-libstdc++ -static -lpthread)
+# Copy shaders (and optionally assets) to build dir so paths work when running from build
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/shaders DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 endif()
-
-# Copy assets and shaders to build dir so paths work when running from build
-add_custom_command(
-    TARGET VoxelGame3D POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/shaders
-        ${CMAKE_CURRENT_BINARY_DIR}/shaders
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/assets
-        ${CMAKE_CURRENT_BINARY_DIR}/assets
-)

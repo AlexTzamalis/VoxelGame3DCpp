@@ -1,68 +1,19 @@
 #version 330 core
 layout (location = 0) in vec3 aPos;
-layout (location = 1) in uint aData;
-layout (location = 2) in vec4 aColor;
+layout (location = 1) in vec3 aNormal;
+layout (location = 2) in vec2 aTexCoord;
 
-out vec3 TexCoord;
+out vec2 TexCoord;
 out vec3 Normal;
 out vec3 FragPos;
-out vec4 VertexColor;
-out vec4 FragPosLightSpace;
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-uniform mat4 lightSpaceMatrix;
-uniform float time;
-uniform int enableShaders;
-uniform int waterMode;
-uniform int enableLeafWind;
-uniform vec3 cameraPos;
 
 void main() {
-    uint dir = aData & 7u;
-    uint width = (aData >> 3u) & 31u;
-    uint height = (aData >> 8u) & 31u;
-    uint layer = (aData >> 13u) & 65535u;
-    uint corner = (aData >> 29u) & 3u;
-
-    const vec3 normals[6] = vec3[6](
-        vec3( 1.0,  0.0,  0.0),
-        vec3(-1.0,  0.0,  0.0),
-        vec3( 0.0,  1.0,  0.0),
-        vec3( 0.0, -1.0,  0.0),
-        vec3( 0.0,  0.0,  1.0),
-        vec3( 0.0,  0.0, -1.0)
-    );
-    vec3 aNormal = normals[dir];
-    
-    float u = (corner == 2u || corner == 3u) ? float(width) : 0.0;
-    float v = (corner == 0u || corner == 3u) ? float(height) : 0.0;
-    vec3 aTexCoord = vec3(u, v, float(layer));
-
-    vec3 wPos = vec3(model * vec4(aPos, 1.0));
-    
-    // Water Wave Animation
-    if (waterMode == 1 && aColor.a > 0.65 && aColor.a < 0.75) {
-        if (aNormal.y > 0.5) {
-            float wave = sin(wPos.x * 0.8 + time * 1.5) * 0.04 + 
-                         cos(wPos.z * 1.2 + time * 1.2) * 0.04 +
-                         sin((wPos.x + wPos.z) * 0.5 + time * 2.0) * 0.02;
-            wPos.y += wave;
-        }
-    }
-    
-    // Leaves wind effect
-    if (enableLeafWind == 1 && aColor.a > 0.8 && aColor.a < 0.9) {
-        float wind = sin(wPos.y * 1.5 + time * 2.0) * 0.05 * sin(time * 0.5);
-        wPos.x += wind;
-        wPos.z += wind * 0.5;
-    }
-
-    FragPos = wPos;
-    FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
+    FragPos = vec3(model * vec4(aPos, 1.0));
     Normal = mat3(transpose(inverse(model))) * aNormal;
     TexCoord = aTexCoord;
-    VertexColor = aColor;
     gl_Position = projection * view * vec4(FragPos, 1.0);
 }

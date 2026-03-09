@@ -98,6 +98,7 @@ private:
     
     // Only re-scan chunks when camera moves to a new chunk
     glm::ivec3 lastScanChunkPos_ = glm::ivec3(999999);
+    int currentScanRadius_ = 0;
 
     // Contains fully loaded and rendered chunks
     std::unordered_map<glm::ivec3, std::unique_ptr<Chunk>, IVec3Hash> chunks_;

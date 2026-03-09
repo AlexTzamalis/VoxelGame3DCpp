@@ -70,16 +70,16 @@ Thumbs.db
 # Project Specific
 build_log.txt
 
-Docs/*.md
-Docs/*.txt
+# Docs and logs — not for GitHub
+Docs/
+logs/
+
+# Texture packs: keep .zip (committed), ignore extracted images and temp
 assets/texture_pack/
 assets/texture_packs/*.png
 assets/texture_packs/*.jpg
 assets/texture_packs/*.jpeg
 assets/texture_packs/.temp_texture_pack/
-assets/texture_packs/.temp_texture_pack/*
-logs/
+
 build_log*.txt
-
-
 *.log
