@@ -75,9 +75,6 @@ namespace Config {
     extern float cloudHeight;
     extern float cloudScale;
     extern float cloudSpeed;
-    extern float exposure;
-    extern float skyIntensity;
-    extern float waterOpacity;
     extern float saturation;
     extern float contrast;
 

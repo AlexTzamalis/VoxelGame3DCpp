@@ -74,6 +74,9 @@ build_log.txt
 Docs/
 logs/
 
+# Legacy include/ (use src/renderer headers)
+include/
+
 # Texture packs: keep .zip (committed), ignore extracted images and temp
 assets/texture_pack/
 assets/texture_packs/*.png

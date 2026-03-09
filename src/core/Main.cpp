@@ -585,7 +585,7 @@ int main() {
             
             shader.setFloat("time", timeVal);
             shader.setInt("isUnderwater", isUnderwater ? 1 : 0);
-            shader.setVec3("cameraPos", camera.getRenderPosition());
+            shader.setVec3("cameraPos", camera.position());
             shader.setVec3("skyColor", skyColor);
             
             // Granular shader uniforms
@@ -598,9 +598,6 @@ int main() {
             shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
             shader.setFloat("saturation", Config::saturation);
             shader.setFloat("contrast", Config::contrast);
-            shader.setFloat("exposure", Config::exposure);
-            shader.setFloat("skyIntensity", Config::skyIntensity);
-            shader.setFloat("waterOpacity", Config::waterOpacity);
 
             // Dynamic Fog scaling for Distant Horizons
             float fogE = float(Config::renderDistance + Config::lodDistance) * 16.0f;
@@ -610,7 +607,7 @@ int main() {
                 shader.setFloat("fogStart", 0.0f);
                 shader.setFloat("fogEnd", 24.0f);
             } else {
-                shader.setFloat("fogStart", fogE * 0.7f);
+                shader.setFloat("fogStart", fogE * 0.85f);
                 shader.setFloat("fogEnd", fogE);
             }
 
@@ -655,10 +652,9 @@ int main() {
                     camera.applyPhysics(deltaTime, checkCollisionCall);
                 }
 
+                // Update the Frustum boundary definitions based on currently moving camera coordinates
+                camera.updateFrustum();
             }
-            
-            // Persistent Frustum Update (Required for MDI culling in all states)
-            camera.updateFrustum();
 
             chunkManager.render(shader.id(), camera, false, fogE);
             
@@ -1139,9 +1135,6 @@ int main() {
                     ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
                     ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
                     ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
-                    ImGui::SliderFloat("Exposure", &Config::exposure, 0.1f, 3.0f);
-                    ImGui::SliderFloat("Sky Intensity", &Config::skyIntensity, 0.1f, 5.0f);
-                    ImGui::SliderFloat("Water Opacity", &Config::waterOpacity, 0.1f, 1.0f);
                     ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
                     
                     ImGui::SeparatorText("Day/Night Cycle");
