@@ -1,5 +1,6 @@
 #include "core/Config.hpp"
 #include "game/InputManager.hpp"
+#include "world/WorldManager.hpp"
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -76,7 +77,7 @@ namespace Config {
     int currentSeed = 1337;
 
     void loadKeybinds() {
-        std::ifstream file("keybinds.ini");
+        std::ifstream file(WorldManager::getSavePath() + "/keybinds.ini");
         if (file.is_open()) {
             std::string action;
             int key;
@@ -87,7 +88,7 @@ namespace Config {
     }
 
     void saveKeybinds() {
-        std::ofstream file("keybinds.ini");
+        std::ofstream file(WorldManager::getSavePath() + "/keybinds.ini");
         if (file.is_open()) {
             for (const auto& [action, key] : InputManager::getAllBindings()) {
                 file << action << " " << key << "\n";
@@ -96,7 +97,7 @@ namespace Config {
     }
 
     void load() {
-        std::ifstream file("settings.ini");
+        std::ifstream file(WorldManager::getSavePath() + "/settings.ini");
         if (file.is_open()) {
             std::string key;
             while(file >> key) {
@@ -146,7 +147,7 @@ namespace Config {
     }
 
     void save() {
-        std::ofstream file("settings.ini");
+        std::ofstream file(WorldManager::getSavePath() + "/settings.ini");
         if (file.is_open()) {
             file << "RENDER_DISTANCE " << renderDistance << "\n"
                  << "RENDER_DISTANCE_Y " << renderDistanceY << "\n"

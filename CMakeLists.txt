@@ -57,6 +57,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# LZ4
+FetchContent_Declare(
+    lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG v1.9.4
+    SOURCE_SUBDIR build/cmake
+)
+FetchContent_MakeAvailable(lz4)
+
 # ImGui
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
 
@@ -91,6 +100,7 @@ target_include_directories(VoxelGame3D PRIVATE
     ${glm_SOURCE_DIR}
     ${glew_SOURCE_DIR}/include
     ${stb_SOURCE_DIR}
+    ${lz4_SOURCE_DIR}/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
@@ -99,6 +109,7 @@ target_include_directories(VoxelGame3D PRIVATE
 target_link_libraries(VoxelGame3D PRIVATE
     glfw
     glew_s
+    lz4_static
     OpenGL::GL
 )
 
