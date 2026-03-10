@@ -70,8 +70,10 @@ Thumbs.db
 # Project Specific
 build_log.txt
 
-# Docs and logs — not for GitHub
-# Docs/
+# docs and logs — not for GitHub
+docs/
+!docs/BUILD-AND-RUN.md
+roadmap-and-instructions/
 logs/
 
 # Legacy include/ (use src/renderer headers)
