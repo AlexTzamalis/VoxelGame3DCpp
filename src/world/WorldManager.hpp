@@ -21,6 +21,7 @@ struct WorldMetadata {
 class WorldManager {
 public:
     static void init();
+    static std::string getSavePath();
     static std::vector<WorldMetadata> getSavedWorlds();
     static bool createWorld(const WorldMetadata& meta);
     static bool saveWorldMetadata(const WorldMetadata& meta);
@@ -36,4 +37,5 @@ public:
     inline static WorldMetadata currentWorld;
     inline static long long sessionStartTime = 0;
     inline static long long sessionStartPlayTime = 0;
+    inline static std::string basePath = "";
 };
