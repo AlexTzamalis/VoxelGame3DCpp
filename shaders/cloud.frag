@@ -11,6 +11,9 @@ uniform float time;
 uniform float cloudHeight;    
 uniform float cloudScale;     
 uniform float cloudSpeed;     
+uniform float cloudDensity;   
+uniform float cloudThickness; 
+uniform int cloudSteps;       
 
 float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -38,8 +41,7 @@ float fbm3D(vec3 p) {
 }
 
 vec2 getCloudDensity(vec3 p) {
-    float thickness = 100.0;
-    float hFract = (p.y - cloudHeight) / thickness;
+    float hFract = (p.y - cloudHeight) / cloudThickness;
     float verticalShape = smoothstep(0.0, 0.15, hFract) * smoothstep(1.0, 0.45, hFract);
     
     vec3 windOffset = vec3(time * cloudSpeed * 15.0, 0.0, time * cloudSpeed * 8.0);
@@ -48,8 +50,7 @@ vec2 getCloudDensity(vec3 p) {
     float noiseRaw = fbm3D(sampleCoord);
     noiseRaw = mix(noiseRaw, fbm3D(sampleCoord * 3.5 + p * 0.02), 0.2);
     
-    float coverage = 0.45; 
-    float density = max(0.0, noiseRaw - coverage) * 4.0; 
+    float density = max(0.0, noiseRaw - (1.0 - cloudDensity)) * 4.0; 
     
     return vec2(density * verticalShape, noiseRaw);
 }
@@ -82,8 +83,7 @@ void main() {
     if (rayDir.y < -0.01) { FragColor = vec4(baseSky, 1.0); return; }
     
     float t_bottom = (cloudHeight - cameraPos.y) / rayDir.y;
-    float thickness = 100.0;
-    float t_top = ((cloudHeight + thickness) - cameraPos.y) / rayDir.y;
+    float t_top = ((cloudHeight + cloudThickness) - cameraPos.y) / rayDir.y;
     
     if (t_bottom < 0.0 && t_top < 0.0) { FragColor = vec4(baseSky, 1.0); return; }
     
@@ -93,7 +93,7 @@ void main() {
     if (t > maxDist) { FragColor = vec4(baseSky, 1.0); return; }
     t_end = min(t_end, maxDist);
     
-    int stepsValue = 24; 
+    int stepsValue = cloudSteps; 
     float stepSize = (t_end - t) / float(stepsValue);
     float ditherVal = fract(sin(dot(ScreenUV.xy, vec2(12.9898, 78.233))) * 43758.5453);
     t += stepSize * ditherVal;

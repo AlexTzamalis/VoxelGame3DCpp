@@ -41,11 +41,11 @@ cd build && ./VoxelGame3D
 If you are using CLion, follow these steps to ensure the game finds its shaders and assets:
 
 1. **Open Project**: Point CLion to the root `CMakeLists.txt`.
-2. **Set Working Directory**: 
+2. **Set Working Directory**:
    - Go to `Run` -> `Edit Configurations`.
    - Select the `VoxelGame3D` target.
    - Set **Working directory** to the folder containing the executable (usually `$ProjectFileDir$/cmake-build-debug` or `$ProjectFileDir$/cmake-build-release`).
-   - *Note*: Shaders and assets are automatically copied to the build directory during the build process.
+   - _Note_: Shaders and assets are automatically copied to the build directory during the build process.
 
 ## ⚠️ Requirements & Compatibility
 
@@ -62,6 +62,7 @@ If you are using CLion, follow these steps to ensure the game finds its shaders 
 ## 📚 Documentation
 
 Detailed guides are located in the `Docs/` directory:
+
 - [Build and Run Instructions](Docs/BUILD-AND-RUN.md)
 - [Performance & Optimization Audit](Docs/PerformanceAnalysis.md)
 - [Internal Architecture](Docs/PROJECT-INSTRUCTIONS.md)

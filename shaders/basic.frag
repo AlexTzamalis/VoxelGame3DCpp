@@ -32,6 +32,11 @@ uniform float saturation;
 uniform float contrast;
 uniform mat4 lightSpaceMatrix;
 
+// Atmosphere expansions
+uniform float sunSize;         
+uniform float sunIntensity;    
+uniform float godRaysIntensity;
+
 // --- ACES Film Tone Mapping ---
 vec3 ACESFilm(vec3 x) {
     float a = 2.51;
@@ -114,7 +119,7 @@ vec3 getSkyColor(vec3 dir) {
     vec3 sunGlowCol = vec3(1.0, 0.9, 0.8) * hg * 0.15;
     
     // Solar Disc
-    float sunDisc = smoothstep(0.9985, 0.9992, sunDot) * 12.0;
+    float sunDisc = smoothstep(1.0 - sunSize, 1.0 - sunSize * 0.5, sunDot) * sunIntensity;
     vec3 sunCol = mix(vec3(1.0, 0.98, 0.9), vec3(1.0, 0.35, 0.1), sunsetFact);
     
     vec3 finalSky = skyBase + sunsetGlow - ozone + sunGlowCol + sunDisc * sunCol;
@@ -213,7 +218,7 @@ void main() {
     }
     
     vec3 resultColor = (ambientVal + (1.0 - shadowValue) * diffuseValue) * texColor.rgb * faceMul;
-    resultColor += volumetricRays * 0.15; 
+    resultColor += volumetricRays * godRaysIntensity; 
     
     // --- Water Overhaul ---
     if (isWater && waterMode == 1) {
