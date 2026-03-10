@@ -274,6 +274,68 @@ namespace {
         
         camera.rotate(dx * Config::mouseSensitivity, dy * Config::mouseSensitivity);
     }
+
+    void applyGraphicsPreset(GraphicsPreset preset) {
+        Config::graphicsPreset = preset;
+        if (preset == GraphicsPreset::CUSTOM) return;
+
+        // Reset to reasonable defaults first
+        Config::enableShaders = true;
+        Config::enableShadows = true;
+        Config::enableFog = true;
+        Config::enableDirectionalFaceShading = true;
+        Config::enableClouds = true;
+        Config::enableLeafWind = true;
+        Config::waterMode = 1;
+
+        switch (preset) {
+            case GraphicsPreset::LOW:
+                Config::renderDistance = 6;
+                Config::enableShadows = false;
+                Config::enableClouds = false;
+                Config::enableFog = true;
+                Config::waterMode = 0;
+                Config::shadowMapSize = 512;
+                Config::cloudQuality = 8;
+                Config::godRaysIntensity = 0.0f;
+                Config::enableLOD = false;
+                break;
+            case GraphicsPreset::MEDIUM:
+                Config::renderDistance = 10;
+                Config::enableShadows = true;
+                Config::enableClouds = true;
+                Config::waterMode = 1;
+                Config::shadowMapSize = 1024;
+                Config::cloudQuality = 16;
+                Config::godRaysIntensity = 0.1f;
+                Config::enableLOD = true;
+                Config::lodDistance = 128;
+                break;
+            case GraphicsPreset::HIGH:
+                Config::renderDistance = 16;
+                Config::enableShadows = true;
+                Config::enableClouds = true;
+                Config::waterMode = 1;
+                Config::shadowMapSize = 2048;
+                Config::cloudQuality = 32;
+                Config::godRaysIntensity = 0.2f;
+                Config::enableLOD = true;
+                Config::lodDistance = 256;
+                break;
+            case GraphicsPreset::ULTRA:
+                Config::renderDistance = 32;
+                Config::enableShadows = true;
+                Config::enableClouds = true;
+                Config::waterMode = 1;
+                Config::shadowMapSize = 4096;
+                Config::cloudQuality = 64;
+                Config::godRaysIntensity = 0.3f;
+                Config::enableLOD = true;
+                Config::lodDistance = 512;
+                break;
+            default: break;
+        }
+    }
 }
 
 int main() {
@@ -598,6 +660,11 @@ int main() {
             shader.setInt("ultraMode", Config::ultraMode ? 1 : 0);
             shader.setFloat("saturation", Config::saturation);
             shader.setFloat("contrast", Config::contrast);
+            
+            // Atmosphere
+            shader.setFloat("sunSize", Config::sunSize);
+            shader.setFloat("sunIntensity", Config::sunIntensity);
+            shader.setFloat("godRaysIntensity", Config::godRaysIntensity);
 
             // Dynamic Fog scaling for Distant Horizons
             float fogE = float(Config::renderDistance + Config::lodDistance) * 16.0f;
@@ -727,6 +794,9 @@ int main() {
                 cloudShader.setFloat("cloudHeight", Config::cloudHeight);
                 cloudShader.setFloat("cloudScale", Config::cloudScale);
                 cloudShader.setFloat("cloudSpeed", Config::cloudSpeed);
+                cloudShader.setFloat("cloudDensity", Config::cloudDensity);
+                cloudShader.setFloat("cloudThickness", Config::cloudThickness);
+                cloudShader.setInt("cloudSteps", Config::cloudQuality);
                 
                 glBindVertexArray(cloudVAO);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1052,6 +1122,13 @@ int main() {
                 if (ImGui::BeginTabItem("Video")) {
                     ImGui::Spacing();
                     
+                    const char* presets[] = { "Low", "Medium", "High", "Ultra", "Custom" };
+                    int currentPreset = static_cast<int>(Config::graphicsPreset);
+                    if (ImGui::Combo("Graphics Quality", &currentPreset, presets, 5)) {
+                        applyGraphicsPreset(static_cast<GraphicsPreset>(currentPreset));
+                    }
+                    ImGui::Separator();
+                    
                     bool prevFs = Config::isFullscreen;
                     if (ImGui::Checkbox("Fullscreen Mode", &Config::isFullscreen)) {
                         GLFWmonitor* primary = glfwGetPrimaryMonitor();
@@ -1091,13 +1168,7 @@ int main() {
                     ImGui::SameLine();
                     if (ImGui::Checkbox("ULTRA MODE (Photon-like)", &Config::ultraMode)) {
                         if (Config::ultraMode) {
-                            Config::enableShaders = true;
-                            Config::enableShadows = true;
-                            Config::enableFog = true;
-                            Config::enableDirectionalFaceShading = true;
-                            Config::enableClouds = true;
-                            Config::enableLeafWind = true;
-                            Config::waterMode = 1;
+                            applyGraphicsPreset(GraphicsPreset::ULTRA);
                         }
                     }
                     if (Config::ultraMode) {
@@ -1127,14 +1198,24 @@ int main() {
                         ImGui::SliderFloat("Cloud Height", &Config::cloudHeight, 100.0f, 400.0f);
                         ImGui::SliderFloat("Cloud Scale", &Config::cloudScale, 0.0003f, 0.003f, "%.4f");
                         ImGui::SliderFloat("Cloud Speed", &Config::cloudSpeed, 0.01f, 0.5f, "%.3f");
+                        ImGui::SliderFloat("Cloud Density", &Config::cloudDensity, 0.1f, 1.0f);
+                        ImGui::SliderFloat("Cloud Thickness", &Config::cloudThickness, 20.0f, 200.0f);
+                        ImGui::SliderInt("Cloud Quality (Steps)", &Config::cloudQuality, 4, 128);
                     }
                     
                     ImGui::SeparatorText("Lighting & Atmosphere");
                     ImGui::Checkbox("Enable Fog", &Config::enableFog);
                     ImGui::Checkbox("Face Directional Shading", &Config::enableDirectionalFaceShading);
-                    ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
-                    ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
-                    ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
+                    
+                    if (ImGui::CollapsingHeader("Atmosphere Control")) {
+                        ImGui::SliderFloat("Sun Size", &Config::sunSize, 0.0001f, 0.01f, "%.4f");
+                        ImGui::SliderFloat("Sun Intensity", &Config::sunIntensity, 1.0f, 30.0f);
+                        ImGui::SliderFloat("God Rays Intensity", &Config::godRaysIntensity, 0.0f, 1.0f);
+                        ImGui::SliderFloat("Ambient Brightness", &Config::ambientBrightness, 0.05f, 0.6f);
+                        ImGui::SliderFloat("Saturation", &Config::saturation, 0.0f, 2.0f);
+                        ImGui::SliderFloat("Contrast", &Config::contrast, 0.5f, 2.0f);
+                    }
+                    
                     ImGui::Checkbox("Leaf Wind Animation", &Config::enableLeafWind);
                     
                     ImGui::SeparatorText("Day/Night Cycle");

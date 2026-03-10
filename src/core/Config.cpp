@@ -54,9 +54,21 @@ namespace Config {
     bool enableClouds = true;
     float cloudHeight = 150.0f;
     float cloudScale = 0.0008f;
-    float cloudSpeed = 0.015f;  // Photon-like slow drift
-    float saturation = 0.85f;  // Toned down for realism
-    float contrast = 1.05f;    // Slightly more punch
+    float cloudSpeed = 0.015f; 
+    float cloudDensity = 0.45f;
+    float cloudThickness = 100.0f;
+    int cloudQuality = 24;
+    
+    float saturation = 0.85f;
+    float contrast = 1.05f;
+
+    // Atmosphere & Sun
+    float sunSize = 0.0008f;
+    float sunIntensity = 12.0f;
+    float godRaysIntensity = 0.15f;
+    
+    // Preset
+    GraphicsPreset graphicsPreset = GraphicsPreset::MEDIUM;
     
     GameMode currentMode = GameMode::CREATIVE;
     GameState currentState = GameState::MAIN_MENU;
@@ -112,8 +124,18 @@ namespace Config {
                 else if (key == "CLOUD_HEIGHT") file >> cloudHeight;
                 else if (key == "CLOUD_SCALE") file >> cloudScale;
                 else if (key == "CLOUD_SPEED") file >> cloudSpeed;
+                else if (key == "CLOUD_DENSITY") file >> cloudDensity;
+                else if (key == "CLOUD_THICKNESS") file >> cloudThickness;
+                else if (key == "CLOUD_QUALITY") file >> cloudQuality;
                 else if (key == "SATURATION") file >> saturation;
                 else if (key == "CONTRAST") file >> contrast;
+                else if (key == "SUN_SIZE") file >> sunSize;
+                else if (key == "SUN_INTENSITY") file >> sunIntensity;
+                else if (key == "GOD_RAYS_INTENSITY") file >> godRaysIntensity;
+                else if (key == "GRAPHICS_PRESET") {
+                    int p; file >> p;
+                    graphicsPreset = static_cast<GraphicsPreset>(p);
+                }
                 else if (key == "PLAYER_SPEED") file >> playerSpeed;
                 else if (key == "SPRINT_SPEED") file >> playerSprintSpeed;
                 else if (key == "SENSITIVITY") file >> mouseSensitivity;
@@ -150,8 +172,15 @@ namespace Config {
                  << "CLOUD_HEIGHT " << cloudHeight << "\n"
                  << "CLOUD_SCALE " << cloudScale << "\n"
                  << "CLOUD_SPEED " << cloudSpeed << "\n"
+                 << "CLOUD_DENSITY " << cloudDensity << "\n"
+                 << "CLOUD_THICKNESS " << cloudThickness << "\n"
+                 << "CLOUD_QUALITY " << cloudQuality << "\n"
                  << "SATURATION " << saturation << "\n"
                  << "CONTRAST " << contrast << "\n"
+                 << "SUN_SIZE " << sunSize << "\n"
+                 << "SUN_INTENSITY " << sunIntensity << "\n"
+                 << "GOD_RAYS_INTENSITY " << godRaysIntensity << "\n"
+                 << "GRAPHICS_PRESET " << static_cast<int>(graphicsPreset) << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"
                  << "SPRINT_SPEED " << playerSprintSpeed << "\n"
                  << "SENSITIVITY " << mouseSensitivity << "\n"

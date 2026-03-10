@@ -19,6 +19,14 @@ enum class GameState {
     COMMAND_INPUT
 };
 
+enum class GraphicsPreset {
+    LOW,
+    MEDIUM,
+    HIGH,
+    ULTRA,
+    CUSTOM
+};
+
 namespace Config {
     // Window & Display Settings
     extern int windowWidth;
@@ -75,8 +83,20 @@ namespace Config {
     extern float cloudHeight;
     extern float cloudScale;
     extern float cloudSpeed;
+    extern float cloudDensity;    // New
+    extern float cloudThickness;  // New
+    extern int cloudQuality;      // New (steps)
+    
     extern float saturation;
     extern float contrast;
+
+    // Atmosphere & Sun
+    extern float sunSize;         // New
+    extern float sunIntensity;    // New
+    extern float godRaysIntensity; // New
+    
+    // Preset
+    extern GraphicsPreset graphicsPreset; // New
 
     // Keybind save/load helpers
     void loadKeybinds();
