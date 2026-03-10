@@ -71,7 +71,7 @@ Thumbs.db
 build_log.txt
 
 # Docs and logs — not for GitHub
-Docs/
+# Docs/
 logs/
 
 # Legacy include/ (use src/renderer headers)
