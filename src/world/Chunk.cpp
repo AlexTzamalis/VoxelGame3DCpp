@@ -248,14 +248,18 @@ void Chunk::generateTerrainV2(FastNoiseLite& tectonic, FastNoiseLite& erosion, F
                     }
                     
                     if (gY == -64) setVoxel(x, y, z, 12);
-                    else if (cvVal < 0.08f) setVoxel(x, y, z, 1);
+                    else if (cvVal < 0.08f) setVoxel(x, y, z, 0); // Air in caves
                     else {
-                        int depth = h - gY;
-                        if (depth == 0 && gY >= 63) {
+                        // Correct surface detection: check if density above is < 0 or if we're at CHUNK limit
+                        float h_above = (float)h - (float)(gY + 1) + density3D.GetNoise(gX, (float)(gY + 1) * 0.8f, gZ) * 7.2f;
+                        bool isSurface = (h_above <= 0.0f);
+                        
+                        if (isSurface && gY >= 63) {
                             if (gY < 64 && b->name != "Ocean" && b->name != "Deep Ocean") setVoxel(x, y, z, 9);
                             else setVoxel(x, y, z, b->surfaceBlock);
-                        } else if ((x + 4) < 24 && (z + 4) < 24 && (h - gY) <= 10) {
-                            if (gY < 63) setVoxel(x, y, z, 4);
+                        } else if (h - gY <= 10) {
+                            // Subsurface layers (Dirt/Sandstone etc)
+                            if (gY < 63 && b->name == "Ocean") setVoxel(x, y, z, 27); // Gravel under water
                             else setVoxel(x, y, z, b->subSurfaceBlock);
                         } else {
                             uint32_t oreHash = static_cast<uint32_t>(std::abs((int)gX * 73 + (int)gY * 31 + (int)gZ * 17 + Config::currentSeed)) % 1000;
@@ -410,9 +414,9 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
         float t = glm::clamp(temp * 0.5f + 0.5f, 0.0f, 1.0f);
         float h = glm::clamp(hum * 0.5f + 0.5f, 0.0f, 1.0f);
 
-        float rVal = glm::mix(glm::mix(0.45f, 0.25f, h), glm::mix(0.65f, 0.15f, h), t);
-        float gVal = glm::mix(glm::mix(0.60f, 0.50f, h), glm::mix(0.70f, 0.78f, h), t);
-        float bVal = glm::mix(glm::mix(0.50f, 0.35f, h), glm::mix(0.25f, 0.15f, h), t);
+        float rVal = glm::mix(glm::mix(0.35f, 0.20f, h), glm::mix(0.55f, 0.10f, h), t);
+        float gVal = glm::mix(glm::mix(0.70f, 0.60f, h), glm::mix(0.80f, 0.95f, h), t);
+        float bVal = glm::mix(glm::mix(0.40f, 0.25f, h), glm::mix(0.20f, 0.05f, h), t);
         
         if (type == 7 || (type >= 31 && type <= 38)) { 
             // Leaves and foliage are slightly darker
@@ -421,8 +425,8 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
             else { r = rVal * 0.9f; g = gVal * 0.9f; b = bVal * 0.9f; }
             a = 0.85f; // Tells vertex shader to apply wind sway!
         } else if (type == 2) { 
-            // Grass
-            if (dir == 2) { r = rVal; g = gVal; b = bVal; } 
+            // Grass - top face should always be tinted
+            if (dir == 2) { r = rVal; g = gVal * 1.1f; b = bVal; } 
         } else if (type == 11) {
             // Snowy grass shouldn't be fully tinted, but somewhat duller underlying green
             if (dir == 2) { r = 0.95f; g = 0.95f; b = 0.95f; } // pure snow on top

@@ -437,6 +437,14 @@ int main() {
     Shader cloudShader("shaders/cloud.vert", "shaders/cloud.frag");
     Shader playerShader("shaders/player.vert", "shaders/player.frag");
     
+    // Photon-inspired Assets
+    Texture galaxyTex, noiseTex, moonTex, starsTex, sunTex;
+    galaxyTex.loadFromFile("assets/shaderImages/galaxy.png");
+    noiseTex.loadFromFile("assets/shaderImages/noise.png");
+    moonTex.loadFromFile("assets/shaderImages/moon_phases.png");
+    starsTex.loadFromFile("assets/shaderImages/stars.png");
+    sunTex.loadFromFile("assets/shaderImages/sun.png");
+
     PlayerRenderer playerRenderer;
     // Fullscreen quad for cloud rendering
     float quadVerts[] = { -1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f };
@@ -574,31 +582,32 @@ int main() {
         }
 
         if (Config::currentState == GameState::PLAYING || Config::currentState == GameState::PAUSED || Config::currentState == GameState::COMMAND_INPUT) {
-            // Day-Night Cycle calculations
+            // Day-Night Cycle: Full 360 degree rotation
             float timeVal = static_cast<float>(glfwGetTime());
             float dayPhase = timeVal * Config::dayTimeSpeed;
             
-            // Vector pointing TOWARDS the sun - GLOBAL axis, not relative to player
-            glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.3f));
+            // Raw sun direction (full 360 rotation)
+            glm::vec3 sunDir = glm::normalize(glm::vec3(cos(dayPhase), sin(dayPhase), 0.2f));
             float sunHeight = sunDir.y;
 
-            glm::vec3 daySky(0.47f, 0.65f, 1.0f);
-            glm::vec3 nightSky(0.01f, 0.02f, 0.05f); // Deep Space Blue
-            glm::vec3 sunsetSky(0.9f, 0.4f, 0.3f);   // Vibrant Orange
+            // Light for shading (always above ground for depth)
+            glm::vec3 shadingLightDir = sunHeight > -0.05f ? sunDir : -sunDir;
             
+            // Atmosphere Colors
             glm::vec3 skyColor;
-            if (sunHeight > 0.2f) skyColor = daySky;
-            else if (sunHeight > 0.0f) skyColor = glm::mix(sunsetSky, daySky, sunHeight / 0.2f);
-            else if (sunHeight > -0.2f) skyColor = glm::mix(nightSky, sunsetSky, (sunHeight + 0.2f) / 0.2f);
+            glm::vec3 daySky(0.42f, 0.65f, 0.95f);
+            glm::vec3 nightSky(0.015f, 0.02f, 0.06f);
+            glm::vec3 sunsetSky(0.9f, 0.45f, 0.25f);
+            
+            if (sunHeight > 0.3f) skyColor = daySky;
+            else if (sunHeight > -0.1f) skyColor = glm::mix(sunsetSky, daySky, glm::smoothstep(-0.1f, 0.3f, sunHeight));
+            else if (sunHeight > -0.4f) skyColor = glm::mix(nightSky, sunsetSky, glm::smoothstep(-0.4f, -0.1f, sunHeight));
             else skyColor = nightSky;
 
             glm::vec3 lightColor;
-            if (sunHeight > 0.2f) lightColor = glm::vec3(1.2f, 1.1f, 1.0f); // Bright Midday
-            else if (sunHeight > 0.0f) lightColor = glm::mix(glm::vec3(1.2f, 0.5f, 0.2f), glm::vec3(1.2f, 1.1f, 1.0f), sunHeight / 0.2f); // Golden Hour
-            else lightColor = glm::vec3(0.1f, 0.12f, 0.2f) + glm::vec3(Config::ambientBrightness * 0.3f); // Moonlight + ambient boost
-
-            // Use the moon as the light source effectively if the sun is down
-            glm::vec3 shaderLightDir = sunHeight > 0.0f ? sunDir : glm::vec3(-sunDir.x, -sunDir.y, -sunDir.z); 
+            if (sunHeight > 0.1f) lightColor = glm::mix(glm::vec3(1.2f, 0.6f, 0.2f), glm::vec3(1.1f, 1.1f, 1.0f), glm::smoothstep(0.1f, 0.4f, sunHeight));
+            else if (sunHeight > -0.1f) lightColor = glm::mix(glm::vec3(0.05f, 0.12f, 0.3f), glm::vec3(1.2f, 0.6f, 0.2f), glm::smoothstep(-0.1f, 0.1f, sunHeight));
+            else lightColor = glm::vec3(0.06f, 0.14f, 0.35f); // Moonlight
 
             // Detect if camera is physically touching water
             int camX = std::floor(camera.position().x);
@@ -611,14 +620,18 @@ int main() {
             }
 
             // PASS 1: SHADOW MAP RENDERING
-            float shadowDist = std::min(Config::renderDistance * 16.0f, 256.0f); // Cap shadow distance  
-            glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -shadowDist * 2.0f, shadowDist * 3.0f);
+            float shadowDist = std::min(Config::renderDistance * 16.0f, 256.0f); // Cap shadow distance
+            glm::mat4 lightProjection = glm::ortho(-shadowDist, shadowDist, -shadowDist, shadowDist, -512.0f, 1024.0f);
             
-            // Shadow light target follows camera smoothly
+            // Stable Shadow Mapping: Snap light target to texel increments
             glm::vec3 lightTarget = camera.position();
-            glm::vec3 lightPos = lightTarget + (shaderLightDir * shadowDist);
+            float texelSize = (shadowDist * 2.0f) / 4096.0f; // 4096 is shadow map resolution
+            lightTarget.x = std::round(lightTarget.x / texelSize) * texelSize;
+            lightTarget.y = std::round(lightTarget.y / texelSize) * texelSize;
+            lightTarget.z = std::round(lightTarget.z / texelSize) * texelSize;
             
-            glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::vec3 lightPos = lightTarget + (shadingLightDir * 512.0f);
+            glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0, 1, 0));
             glm::mat4 lightSpaceMatrix = lightProjection * lightView;
             
             // TEXEL SNAPPING: Prevents shadow flickering/shimmer when camera moves
@@ -660,6 +673,61 @@ int main() {
 
             glClearColor(skyColor.r, skyColor.g, skyColor.b, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            // PASS 2.1: Sky & Cloud Rendering (FIRST, as background)
+            if (Config::enableShaders) {
+                glDepthMask(GL_FALSE); 
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                
+                cloudShader.use();
+                // Pass matrices separately for more stable skybox calculation
+                cloudShader.setMat4("view", camera.viewMatrix());
+                cloudShader.setMat4("projection", camera.projectionMatrix());
+
+                cloudShader.setVec3("cameraPos", camera.position());
+                cloudShader.setVec3("sunDir", sunDir); 
+                cloudShader.setVec3("lightDir", shadingLightDir);
+                cloudShader.setVec3("lightColor", lightColor);
+                cloudShader.setVec3("skyColor", skyColor);
+                cloudShader.setFloat("time", timeVal);
+                
+                // Texture Units
+                cloudShader.setInt("galaxyTexture", 2);
+                cloudShader.setInt("noiseTexture", 3);
+                cloudShader.setInt("moonTexture", 4);
+                cloudShader.setInt("starsTexture", 5);
+                cloudShader.setInt("sunTexture", 6);
+
+                galaxyTex.bind(2);
+                noiseTex.bind(3);
+                moonTex.bind(4);
+                starsTex.bind(5);
+                sunTex.bind(6);
+
+                cloudShader.setFloat("cloudHeight", Config::cloudHeight);
+                cloudShader.setFloat("cloudScale", Config::cloudScale);
+                cloudShader.setFloat("cloudSpeed", Config::cloudSpeed);
+                cloudShader.setFloat("cloudDensity", Config::cloudDensity);
+                cloudShader.setFloat("cloudThickness", Config::cloudThickness);
+                cloudShader.setInt("cloudSteps", Config::cloudQuality);
+                cloudShader.setInt("showClouds", Config::enableClouds ? 1 : 0);
+
+                cloudShader.setFloat("sunSize", Config::sunSize);
+                cloudShader.setFloat("sunIntensity", Config::sunIntensity);
+                cloudShader.setVec3("sunColor", Config::sunColor);
+                cloudShader.setFloat("moonSize", Config::moonSize);
+                cloudShader.setFloat("moonIntensity", Config::moonIntensity);
+                cloudShader.setFloat("starDensity", Config::starDensity);
+                cloudShader.setFloat("milkyWayIntensity", Config::milkyWayIntensity);
+                
+                glBindVertexArray(cloudVAO);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+            }
 
             shader.use();
             
@@ -716,13 +784,14 @@ int main() {
 
             if (isUnderwater) {
                 shader.setFloat("fogStart", 0.0f);
-                shader.setFloat("fogEnd", 32.0f); // Slightly more visibility
+                shader.setFloat("fogEnd", 32.0f);
             } else {
-                shader.setFloat("fogStart", fogE * 0.15f); // Constant atmospheric haze starting close
+                shader.setFloat("fogStart", fogE * 0.2f); 
                 shader.setFloat("fogEnd", fogE);
             }
 
-            shader.setVec3("lightDir", shaderLightDir);
+            shader.setVec3("sunDir", sunDir); 
+            shader.setVec3("lightDir", shadingLightDir);
             shader.setVec3("lightColor", lightColor);
             
             glActiveTexture(GL_TEXTURE0);
@@ -732,6 +801,18 @@ int main() {
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, depthMap);
             shader.setInt("shadowMap", 1);
+            
+            // Photon Sky/Noise Textures
+            shader.setInt("galaxyTexture", 2);
+            shader.setInt("noiseTexture", 3);
+            shader.setInt("moonTexture", 4);
+            shader.setInt("starsTexture", 5);
+            shader.setInt("sunTexture", 6);
+            galaxyTex.bind(2);
+            noiseTex.bind(3);
+            moonTex.bind(4);
+            starsTex.bind(5);
+            sunTex.bind(6);
             
             if (Config::currentState == GameState::PLAYING) {
                 // Determine if chunk we are inside is fully generated
@@ -807,7 +888,8 @@ int main() {
                 playerShader.setInt("enableShadows", Config::enableShadows ? 1 : 0);
                 playerShader.setVec3("lightColor", lightColor);
                 playerShader.setVec3("skyColor", skyColor);
-                playerShader.setVec3("lightDir", shaderLightDir);
+                playerShader.setVec3("sunDir", sunDir); 
+                playerShader.setVec3("lightDir", shadingLightDir);
                 playerShader.setFloat("shadowIntensity", Config::shadowIntensity);
                 
                 playerShader.setInt("playerTexture", 0);
@@ -820,42 +902,6 @@ int main() {
                 lastPlayerPos = camera.position();
                 
                 playerRenderer.render(camera, timeVal, actualVelocity, false, playerShader.id());
-            }
-
-            // Cloud Rendering Pass
-            if (Config::enableClouds && Config::enableShaders) {
-                glDepthMask(GL_FALSE); // Don't write to depth buffer
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                
-                cloudShader.use();
-                glm::mat4 invViewProj = glm::inverse(camera.projectionMatrix() * camera.viewMatrix());
-                cloudShader.setMat4("invViewProj", invViewProj);
-                cloudShader.setVec3("cameraPos", camera.position());
-                cloudShader.setVec3("lightDir", shaderLightDir);
-                cloudShader.setVec3("lightColor", lightColor);
-                cloudShader.setVec3("skyColor", skyColor);
-                cloudShader.setFloat("time", timeVal);
-                cloudShader.setFloat("cloudHeight", Config::cloudHeight);
-                cloudShader.setFloat("cloudScale", Config::cloudScale);
-                cloudShader.setFloat("cloudSpeed", Config::cloudSpeed);
-                cloudShader.setFloat("cloudDensity", Config::cloudDensity);
-                cloudShader.setFloat("cloudThickness", Config::cloudThickness);
-                cloudShader.setInt("cloudSteps", Config::cloudQuality);
-
-                cloudShader.setFloat("sunSize", Config::sunSize);
-                cloudShader.setFloat("sunIntensity", Config::sunIntensity);
-                cloudShader.setVec3("sunColor", Config::sunColor);
-                cloudShader.setFloat("moonSize", Config::moonSize);
-                cloudShader.setFloat("moonIntensity", Config::moonIntensity);
-                cloudShader.setFloat("starDensity", Config::starDensity);
-                cloudShader.setFloat("milkyWayIntensity", Config::milkyWayIntensity);
-                
-                glBindVertexArray(cloudVAO);
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                glBindVertexArray(0);
-                
-                glDepthMask(GL_TRUE);
             }
         } else {
             // Main Menu / Background Canvas (Dirt Brown color)
