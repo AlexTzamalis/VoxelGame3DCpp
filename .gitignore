@@ -71,6 +71,7 @@ Thumbs.db
 build_log.txt
 
 # Docs and logs — not for GitHub
+docs/
 roadmap-and-instructions/
 saves/
 logs/
