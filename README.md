@@ -61,11 +61,9 @@ If you are using CLion, follow these steps to ensure the game finds its shaders 
 
 ## Documentation
 
-Detailed guides are located in the `docs/` or `roadmap-and-instructions/` directory:
+Detailed Build and Run instructions are located in the `docs/` directory:
 
 - [Build and Run Instructions](docs/BUILD-AND-RUN.md)
-- [Performance & Optimization Audit](roadmap-and-instructions/PerformanceAnalysis.md)
-- [Internal Architecture](roadmap-and-instructions/PROJECT-INSTRUCTIONS.md)
 
 ## License
 

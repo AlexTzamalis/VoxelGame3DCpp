@@ -88,529 +88,292 @@ void Chunk::setVoxel(int x, int y, int z, uint8_t type) {
     }
 }
 
-void Chunk::generateTerrain(FastNoiseLite& heightNoise, FastNoiseLite& caveNoise) {
+void Chunk::generateTerrain(FastNoiseLite& tectonic, FastNoiseLite& erosion, FastNoiseLite& temp, FastNoiseLite& hum, FastNoiseLite& density, FastNoiseLite& cave, FastNoiseLite& cluster) {
     if (Config::currentWorldType == 3) {
-        generateTerrainV2();
-        return;
-    }
-    if (Config::currentWorldType == 1) { // Flat World (1 Stone, 2 Dirt, 1 Grass)
-        for (int x = -1; x <= CHUNK_SIZE; ++x) {
-            for (int y = -1; y <= CHUNK_SIZE; ++y) {
-                int globalY = position_.y * CHUNK_SIZE + y;
-                for (int z = -1; z <= CHUNK_SIZE; ++z) {
-                    if (globalY == -3) setVoxel(x, y, z, 4); // Stone
-                    else if (globalY == -2 || globalY == -1) setVoxel(x, y, z, 3); // Dirt
-                    else if (globalY == 0) setVoxel(x, y, z, 2); // Grass
-                    else setVoxel(x, y, z, 1); // Air
-                }
-            }
-        }
+        generateTerrainV2(tectonic, erosion, temp, hum, density, cave, cluster);
         return;
     }
     
-    if (Config::currentWorldType == 2) { // Skyblock (Central Island)
-        for (int x = -1; x <= CHUNK_SIZE; ++x) {
-            int globalX = position_.x * CHUNK_SIZE + x;
-            for (int y = -1; y <= CHUNK_SIZE; ++y) {
-                int globalY = position_.y * CHUNK_SIZE + y;
-                for (int z = -1; z <= CHUNK_SIZE; ++z) {
-                    int globalZ = position_.z * CHUNK_SIZE + z;
-                    if (globalX >= -3 && globalX <= 3 && globalZ >= -3 && globalZ <= 3) {
-                        if (globalY == 0) setVoxel(x, y, z, 2); // Grass
-                        else if (globalY >= -2 && globalY < 0) setVoxel(x, y, z, 3); // Dirt
-                        else setVoxel(x, y, z, 1); // Air
-                    } else {
-                        setVoxel(x, y, z, 1); // Air
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    auto getTreeAt = [&](int tx, int tz, int& outHeight, const Biome*& outBiome) -> bool {
-        uint32_t tMixX = (uint32_t)std::abs(tx + Config::currentSeed * 7);
-        uint32_t tMixZ = (uint32_t)std::abs(tz + Config::currentSeed * 13);
-        uint32_t tHash = (tMixX * 374761393U ^ tMixZ * 668265263U);
-        tHash = (tHash ^ (tHash >> 13)) * 1274126177U;
-        
-        float tNoise = heightNoise.GetNoise((float)tx, (float)tz);
-        float tTemp = heightNoise.GetNoise(tz * 0.4f - 10000.0f, tx * 0.4f + 10000.0f);
-        const Biome* b = BiomeManager::getBiome(tNoise, tTemp);
-        
-        if (b->treeDensity > 0 && (tHash % 1000) < b->treeDensity) {
-            int th = b->getTerrainHeight(tNoise);
-            if (th > 64 && th < 130) {
-                outHeight = th;
-                outBiome = b;
-                return true;
-            }
-        }
-        return false;
-    };
-
-    struct TreeInfo {
-        bool exists;
-        int height;
-        const Biome* biome;
-    };
-    TreeInfo localTrees[24][24];
-    for (int lx = 0; lx < 24; ++lx) {
-        for (int lz = 0; lz < 24; ++lz) {
-            int tx = position_.x * CHUNK_SIZE - 4 + lx;
-            int tz = position_.z * CHUNK_SIZE - 4 + lz;
-            localTrees[lx][lz].exists = getTreeAt(tx, tz, localTrees[lx][lz].height, localTrees[lx][lz].biome);
-        }
-    }
-
+    // V1/Simple Fallback
     for (int x = -1; x <= CHUNK_SIZE; ++x) {
         for (int z = -1; z <= CHUNK_SIZE; ++z) {
-            float globalX = position_.x * CHUNK_SIZE + x;
-            float globalZ = position_.z * CHUNK_SIZE + z;
-            
-            float noiseVal = heightNoise.GetNoise(globalX, globalZ);
-            float tempNoise = heightNoise.GetNoise(globalZ * 0.45f + 2137.0f, globalX * 0.45f - 1492.0f);
-            float continental = heightNoise.GetNoise(globalX * 0.1f, globalZ * 0.1f);
-            
-            const Biome* biome = BiomeManager::getBiome(continental, tempNoise);
-            int height = biome->getTerrainHeight(noiseVal);
+            float gX = position_.x * CHUNK_SIZE + x;
+            float gZ = position_.z * CHUNK_SIZE + z;
+            float n = tectonic.GetNoise(gX, gZ);
+            int h = static_cast<int>(60 + (n + 1.0f) * 40.0f);
 
             for (int y = -1; y <= CHUNK_SIZE; ++y) {
-                int globalY = position_.y * CHUNK_SIZE + y;
-                
-                if (globalY < height) {
-                    float caveVal = caveNoise.GetNoise(globalX, (float)globalY, globalZ);
-                    float tunnelThreshold = 0.5f;
-                    
-                    float depth = height - globalY;
-                    if (depth < 15.0f) {
-                        tunnelThreshold += (15.0f - depth) * 0.05f;
-                    }
-                    
-                    if (globalY == -64) {
-                        setVoxel(x, y, z, 12); // Bedrock
-                    } else if (globalY > -95 && caveVal > tunnelThreshold) {
-                        setVoxel(x, y, z, 1); // Air Cave
-                    } else {
-                        if (globalY == height - 1) {
-                            if (globalY < 64 && biome->name != "Deep Ocean") setVoxel(x, y, z, 9); // Sand beach
-                            else setVoxel(x, y, z, biome->surfaceBlock);
-                        } else if (globalY > height - 4) {
-                            setVoxel(x, y, z, biome->subSurfaceBlock);
-                        } else {
-                            uint8_t baseStone = (globalY < -10) ? 17 : 4; 
-                            int modHash = std::abs(((int)globalX * 73 + (int)globalY * 31 + (int)globalZ * 17 + Config::currentSeed) % 1000);
-                            
-                            if (globalY < 16 && modHash < 3)        setVoxel(x, y, z, 15);
-                            else if (globalY < 32 && modHash < 7)   setVoxel(x, y, z, 14);
-                            else if (globalY < 55 && modHash < 15)  setVoxel(x, y, z, 13);
-                            else if (globalY < 30 && modHash > 994) setVoxel(x, y, z, 16);
-                            else if (globalY < 16 && modHash > 990) setVoxel(x, y, z, 18);
-                            else if (globalY < 60 && modHash > 980) setVoxel(x, y, z, 8);
-                            else setVoxel(x, y, z, baseStone);
-                        }
-                    }
-                } 
-                else if (globalY <= 63) {
-                    setVoxel(x, y, z, 5); // Water
-                } 
-                else {
-                    setVoxel(x, y, z, 1); // Base Air
-                    
-                    if (biome->treeDensity == 0) continue;
-
-                    // Evaluate tree structure exactly for current position globally
-                    bool isWood = false;
-                    bool isLeaf = false;
-                    bool isSnow = false;
-                    
-                    // Note: Check up to radius 3 for pine tree leaves
-                    for (int dx = -3; dx <= 3 && !isWood && !isLeaf && !isSnow; ++dx) {
-                        for (int dz = -3; dz <= 3 && !isWood && !isLeaf && !isSnow; ++dz) {
-                            int tx = globalX + dx;
-                            int tz = globalZ + dz;
-                            int lx = x + dx + 4;
-                            int lz = z + dz + 4;
-                            
-                            if (localTrees[lx][lz].exists) {
-                                int tHeight = localTrees[lx][lz].height;
-                                const Biome* tBiome = localTrees[lx][lz].biome;
-                                int dy = globalY - tHeight;
-                                // Core properties of this tree
-                                if (tBiome->treeType == TreeType::OAK) {
-                                    if (dx == 0 && dz == 0 && dy >= 0 && dy <= 4) isWood = true;
-                                    else if (dy >= 3 && dy <= 5) {
-                                        if (std::abs(dx) <= 2 && std::abs(dz) <= 2) {
-                                            if (dy == 5 && (std::abs(dx) == 2 || std::abs(dz) == 2)) continue;
-                                            isLeaf = true;
-                                        }
-                                    }
-                                } else if (tBiome->treeType == TreeType::PINE) {
-                                    // Pine goes from 0 to 7 high
-                                    if (dx == 0 && dz == 0 && dy >= 0 && dy <= 7) isWood = true;
-                                    else if (dy >= 2 && dy <= 8) {
-                                        int radius = (8 - dy) / 2 + 1; // 2 at dy=2, 2 at dy=3, 1 at dy=4..
-                                        if (dy == 2) radius = 2;
-                                        if (dy == 3) radius = 2;
-                                        if (dy == 4) radius = 1;
-                                        if (dy == 5) radius = 1;
-                                        if (dy == 6) radius = 1;
-                                        if (dy == 7) radius = 0;
-                                        
-                                        if (std::abs(dx) <= radius && std::abs(dz) <= radius) {
-                                            if (std::abs(dx) == radius && std::abs(dz) == radius && radius > 0) {
-                                                // Round corners slightly
-                                                int rHash = std::abs(tx * 31 + tz * 17 + dy) % 100;
-                                                if (rHash < 40) continue; 
-                                            }
-                                            isLeaf = true;
-                                        }
-                                    }
-                                }
-                                
-                                // Added Snow placement logic on top of leaf bounds!
-                                if (tBiome->treeType == TreeType::PINE && tBiome->name == "Taiga") {
-                                    // If we are exactly +1 above a leaf block, place snow!
-                                    int ldy = dy - 1; 
-                                    if (ldy >= 2 && ldy <= 7) {
-                                        int radius = (8 - ldy) / 2 + 1;
-                                        if (ldy == 2) radius = 2;
-                                        if (ldy == 3) radius = 2;
-                                        if (ldy == 4) radius = 1;
-                                        if (ldy == 5) radius = 1;
-                                        if (ldy == 6) radius = 1;
-                                        if (ldy == 7) radius = 0;
-                                        
-                                        if (std::abs(dx) <= radius && std::abs(dz) <= radius) {
-                                            // Make sure we didn't just place a leaf HERE too!
-                                            // Snow only exists if we aren't leaf or wood
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (isWood) setVoxel(x, y, z, 6); // Spruce Log / Oak Log
-                    else if (isLeaf) setVoxel(x, y, z, 7); // Leaf Block
-                    else if (isSnow) setVoxel(x, y, z, 10); // Snow
-                }
-            }
-            
-            // Post-pass for snow on top of leaves
-            for (int y = -1; y <= CHUNK_SIZE; ++y) {
-                int globalY = position_.y * CHUNK_SIZE + y;
-                if (globalY > height) {
-                    uint8_t under = getVoxel(x, y - 1, z);
-                    uint8_t current = getVoxel(x, y, z);
-                    if (current == 1 && under == 7 && (biome->name == "Taiga" || biome->name == "Tundra")) {
-                        // Place snow randomly on top of exposed leaves
-                        if (std::abs((int)globalX * 13 + (int)globalZ * 7 + globalY) % 100 < 80) {
-                            setVoxel(x, y, z, 10);
-                        }
-                    }
+                int gY = position_.y * CHUNK_SIZE + y;
+                if (gY < h) {
+                    if (gY == h - 1) setVoxel(x, y, z, 2);
+                    else if (gY > h - 4) setVoxel(x, y, z, 3);
+                    else setVoxel(x, y, z, 4);
+                } else if (gY <= 63) {
+                    setVoxel(x, y, z, 5);
                 }
             }
         }
     }
 }
 
-void Chunk::generateTerrainV2() {
-    // V2: Crazy generation, tectonic world, realistic landscapes, fixed caves, deeper non-linear lakes, 10-15 biomes.
-    FastNoiseLite tectonicNoise;
-    tectonicNoise.SetSeed(Config::currentSeed + 1234);
-    tectonicNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2); // Curve Mapped OpenSimplex2
-    tectonicNoise.SetFrequency(0.0015f);
-    tectonicNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-    
-    FastNoiseLite erosionNoise;
-    erosionNoise.SetSeed(Config::currentSeed + 5678);
-    erosionNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    erosionNoise.SetFrequency(0.002f);
-    erosionNoise.SetFractalType(FastNoiseLite::FractalType_DomainWarpProgressive); // Domain Warping
-    
-    FastNoiseLite tempNoise;
-    tempNoise.SetSeed(Config::currentSeed + 9101);
-    tempNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    tempNoise.SetFrequency(0.004f);
+void Chunk::generateTerrainV2(FastNoiseLite& tectonic, FastNoiseLite& erosion, FastNoiseLite& temp, FastNoiseLite& hum, FastNoiseLite& density3D, FastNoiseLite& cave3D, FastNoiseLite& cluster) {
+    struct ColumnInfo {
+        int height;
+        const Biome* biome;
+        bool wantTree;
+        TreeType tType;
+        bool wantRock;
+        uint8_t rockType;
+        uint8_t groundType; 
+        float slopeNormal; // y-component of the surface normal
+    };
 
-    FastNoiseLite humNoise;
-    humNoise.SetSeed(Config::currentSeed + 1121);
-    humNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    humNoise.SetFrequency(0.004f);
-    
-    FastNoiseLite caveNoise3D;
-    caveNoise3D.SetSeed(Config::currentSeed + 3141);
-    caveNoise3D.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2); 
-    caveNoise3D.SetFrequency(0.025f); // "Swiss Cheese" logic
-    
-    FastNoiseLite densityNoise3D;
-    densityNoise3D.SetSeed(Config::currentSeed + 9999);
-    densityNoise3D.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    densityNoise3D.SetFrequency(0.015f);
-    densityNoise3D.SetFractalType(FastNoiseLite::FractalType_FBm);
-    densityNoise3D.SetFractalOctaves(3);
+    FastNoiseLite rockNoise;
+    rockNoise.SetSeed(Config::currentSeed + 777);
+    rockNoise.SetNoiseType(FastNoiseLite::NoiseType_Cellular);
+    rockNoise.SetFrequency(0.04f);
 
-    FastNoiseLite clusterNoise;
-    clusterNoise.SetSeed(Config::currentSeed + 7777);
-    clusterNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    clusterNoise.SetFrequency(0.008f); // Shared Flora Clustering Noise
+    ColumnInfo grid[24][24];
+    // First pass: Biome and Base Height
+    for (int lx = 0; lx < 24; ++lx) {
+        for (int lz = 0; lz < 24; ++lz) {
+            float gX = (float)position_.x * CHUNK_SIZE - 4 + lx;
+            float gZ = (float)position_.z * CHUNK_SIZE - 4 + lz;
+            
+            float tec = tectonic.GetNoise(gX, gZ);
+            float tmp = temp.GetNoise(gX, gZ);
+            float hmd = hum.GetNoise(gX, gZ);
+            float ero = erosion.GetNoise(gX, gZ);
+            
+            grid[lx][lz].biome = BiomeManager::getBiome(tec, tmp, hmd);
+            grid[lx][lz].height = BiomeManager::getGlobalHeight(tec, ero);
+            grid[lx][lz].wantTree = false;
+            grid[lx][lz].wantRock = false;
+        }
+    }
 
+    // Second pass: Contextual Heuristics (Normals) & Distribution (Jittered Grid)
+    for (int lx = 4; lx < 20; ++lx) {
+        for (int lz = 4; lz < 20; ++lz) {
+            // Sample 3x3 for normal
+            float hL = (float)grid[lx-1][lz].height;
+            float hR = (float)grid[lx+1][lz].height;
+            float hU = (float)grid[lx][lz-1].height;
+            float hD = (float)grid[lx][lz+1].height;
+            
+            glm::vec3 va(2.0f, hR - hL, 0.0f);
+            glm::vec3 vb(0.0f, hD - hU, 2.0f);
+            glm::vec3 normal = glm::normalize(glm::cross(vb, va));
+            grid[lx][lz].slopeNormal = normal.y;
+
+            float gX = (float)position_.x * CHUNK_SIZE - 4 + lx;
+            float gZ = (float)position_.z * CHUNK_SIZE - 4 + lz;
+
+            // Jittered Grid Distribution (Poisson Disc approx)
+            // Divide chunk into 2x2 cells for trees (4x more spots than 4x4)
+            if (lx % 2 == 0 && lz % 2 == 0) {
+                uint32_t cellSeed = static_cast<uint32_t>(gX) * 131 + static_cast<uint32_t>(gZ) * 17 + Config::currentSeed;
+                int jX = (cellSeed % 2);
+                int jZ = (cellSeed / 2) % 2;
+                
+                int targetX = lx + jX;
+                int targetZ = lz + jZ;
+                
+                if (targetX < 24 && targetZ < 24) {
+                    float cld = cluster.GetNoise(gX + jX, gZ + jZ);
+                    int chance = grid[targetX][targetZ].biome->treeDensity;
+                    
+                    // User wants 10x more tree placement & dense forests
+                    if (cld < -0.3f) chance = 0; // Natural gaps
+                    else if (cld > 0.4f) chance *= 5; // Very dense forest clumps
+                    else if (cld > 0.1f) chance *= 2; // Denser
+                    
+                    uint32_t tSeed = static_cast<uint32_t>(gX + jX) * 374761393U ^ static_cast<uint32_t>(gZ + jZ) * 668265263U ^ Config::currentSeed;
+                    if (chance > 0 && (tSeed % 1000) < (uint32_t)chance && grid[targetX][targetZ].height > 65) {
+                        grid[targetX][targetZ].wantTree = true;
+                        grid[targetX][targetZ].tType = grid[targetX][targetZ].biome->treeType;
+                    }
+                }
+            }
+
+            float rn = rockNoise.GetNoise(gX, gZ);
+            if (rn > 0.96f && grid[lx][lz].height > 63 && !grid[lx][lz].wantTree) {
+                grid[lx][lz].wantRock = true;
+                uint32_t rSeed = (uint32_t)gX * 123 + (uint32_t)gZ * 456 + Config::currentSeed;
+                int rRnd = rSeed % 100;
+                if (rRnd < 30) grid[lx][lz].rockType = 24;
+                else if (rRnd < 60) grid[lx][lz].rockType = 22;
+                else if (rRnd < 90) grid[lx][lz].rockType = 23;
+                else grid[lx][lz].rockType = 4;
+            }
+        }
+    }
+
+    auto generateStructure = [&](int bx, int by, int bz, const std::vector<std::pair<glm::ivec3, uint8_t>>& bks) {
+        for (const auto& b : bks) {
+            int lx = bx + b.first.x;
+            int ly = by + b.first.y;
+            int lz = bz + b.first.z;
+            if (lx >= -1 && lx <= CHUNK_SIZE && lz >= -1 && lz <= CHUNK_SIZE && (ly + position_.y * CHUNK_SIZE) < 256) {
+                 uint8_t existing = getVoxel(lx, ly, lz);
+                 if (existing <= 1 || existing == 7) { // Only replace air (0/1) or existing leaves
+                    setVoxel(lx, ly, lz, b.second);
+                 }
+            }
+        }
+    };
+            
+    // Step 1: Base Terrain & 3D Density
     for (int x = -1; x <= CHUNK_SIZE; ++x) {
         for (int z = -1; z <= CHUNK_SIZE; ++z) {
             float gX = position_.x * CHUNK_SIZE + x;
             float gZ = position_.z * CHUNK_SIZE + z;
-            
-            float tec = tectonicNoise.GetNoise(gX, gZ); // -1 to 1
-            float ero = erosionNoise.GetNoise(gX, gZ);  // -1 to 1
-            float tmp = tempNoise.GetNoise(gX, gZ);
-            float hum = humNoise.GetNoise(gX, gZ);
-            
-            // Build Continent Height
-            float baseH = (tec * 0.5f + 0.5f); // 0 to 1
-            float terrainVariance = 1.0f - std::abs(ero); // Bumpy vs smooth
-            
-            // Mountains are where continentalness is high and erosion is low
-            float finalNormalized = baseH * baseH + (terrainVariance * 0.4f * (baseH)); 
-            
-            // Bias land massively to reduce oceans!
-            finalNormalized = finalNormalized * 1.25f + 0.1f;
-            
-            // Height remap: -100 to 200 (Normal Large Mountains)
-            int h = static_cast<int>(finalNormalized * 260.0f) - 60;
-            
-            // Lakes (deep curved lakes instead of straight digged)
-            if (h < 0 && h > -40) {
-                // Blend down smoothly for lakes
-                h -= std::pow(-h, 1.2f);
-            }
-
-            // Biome selection inline for our 15 distinct environments
-            uint8_t surf = 2, sub = 3;
-            std::string bName = "Plains";
-            int treeChance = 0;
-            TreeType tType = TreeType::NONE;
-            
-            if (h < 5) { // Ocean / Deep Lake levels
-                if (tmp < -0.3f) { bName = "Frozen Ocean"; surf = 10; sub = 10; } // Snow
-                else if (tmp > 0.4f) { bName = "Warm Ocean"; surf = 9; sub = 9; } // Sand
-                else { bName = "Deep Ocean"; surf = 27; sub = 3; } // Gravel over dirt
-            } else if (h > 180) { // Extremely High Mountains
-                if (tmp < 0.0f) { bName = "Snowy Peaks"; surf = 10; sub = 26; } // Snow over Calcite
-                else { bName = "Stone Peaks"; surf = 22; sub = 24; } // Diorite over Andesite
-                if (hum > 0.3f && h < 250) { treeChance = 20; tType = TreeType::PINE; }
-            } else {
-                if (tmp < -0.4f) {
-                    if (hum < -0.2f) { bName = "Tundra"; surf = 11; sub = 3; treeChance = 5; tType = TreeType::PINE; }
-                    else { bName = "Snowy Taiga"; surf = 11; sub = 3; treeChance = 60; tType = TreeType::PINE; }
-                } else if (tmp < 0.0f) {
-                    if (hum > 0.3f) { bName = "Old Growth Pine"; surf = 29; sub = 3; treeChance = 90; tType = TreeType::PINE; } // Podzol
-                    else { bName = "Grove"; surf = 10; sub = 3; treeChance = 15; tType = TreeType::PINE; } // Snow
-                } else if (tmp > 0.5f) {
-                    if (hum < -0.2f) { bName = "Desert"; surf = 9; sub = 9; }
-                    else if (hum > 0.3f) { bName = "Jungle"; surf = 28; sub = 3; treeChance = 150; tType = TreeType::OAK; } // Moss_block
-                    else { bName = "Savanna"; surf = 30; sub = 3; treeChance = 10; tType = TreeType::OAK; } // Coarse dirt
-                } else {
-                    if (hum > 0.4f) { bName = "Swamp"; surf = 30; sub = 3; treeChance = 20; tType = TreeType::OAK; } // Coarse dirt
-                    else if (hum > 0.1f) { bName = "Forest"; surf = 2; sub = 3; treeChance = 80; tType = TreeType::OAK; }
-                    else { bName = "Plains"; surf = 2; sub = 3; treeChance = 2; tType = TreeType::OAK; }
-                }
-            }
-            
-            // Clustering Noise for plants/trees
-            float plantCluster = clusterNoise.GetNoise(gX, gZ); 
-            if (plantCluster < -0.2f) treeChance /= 4; // Clearing
-            else if (plantCluster > 0.3f) treeChance *= 2; // Forest Grove
-            
-            // Check Tree
-            uint32_t cxHash = std::hash<int>()(static_cast<int>(gX));
-            uint32_t czHash = std::hash<int>()(static_cast<int>(gZ));
-            uint32_t tMix = cxHash ^ (czHash << 1) ^ Config::currentSeed;
-            bool wantTree = (treeChance > 0 && (tMix % 1000) < (uint32_t)treeChance);
-            
-            // 3D Density Evaluation column (overscanned by 5 to check surface states!)
-            float blockDensities[CHUNK_SIZE + 6]; 
-            for (int y = -1; y <= CHUNK_SIZE + 4; ++y) {
-                int gY = position_.y * CHUNK_SIZE + y;
-                if (gY <= -100) {
-                    blockDensities[y + 1] = 100.0f;
-                } else if (std::abs(gY - h) > 30) {
-                    // Optimization: Far from surface, skip expensive 3D volumetric noise
-                    blockDensities[y + 1] = (float)h - (float)gY;
-                } else {
-                    float stepHytaleRemap = std::sin((float)gY * 0.3f) * 2.5f; // Terracing
-                    float denVal = densityNoise3D.GetNoise(gX, (float)gY * 1.5f, gZ) * 22.0f;
-                    blockDensities[y + 1] = (float)h - (float)gY + denVal + stepHytaleRemap;
-                }
-            }
+            const ColumnInfo& col = grid[x + 4][z + 4];
+            int h = col.height;
+            const Biome* b = col.biome;
 
             for (int y = -1; y <= CHUNK_SIZE; ++y) {
                 int gY = position_.y * CHUNK_SIZE + y;
-                
-                float density = blockDensities[y + 1];
-                float denAbove1 = blockDensities[y + 2];
-                float denAbove4 = blockDensities[y + 5];
-                
+                float density = (float)h - (float)gY;
+                if (std::abs(gY - h) < 25) {
+                    density += density3D.GetNoise(gX, (float)gY * 0.8f, gZ) * 7.2f;
+                }
+
                 if (density > 0.0f) {
                     float cvVal = 1.0f;
-                    if (gY < -5 && gY > -95) {
-                        // Optimization: Only evaluate 3D cave noise deep underground!
-                        cvVal = caveNoise3D.GetNoise(gX, (float)gY * 1.5f, gZ); 
+                    if (gY < h - 4) {
+                        float v1 = cave3D.GetNoise(gX, (float)gY * 0.7f, gZ);
+                        float v2 = cave3D.GetNoise(gX + 123.0f, (float)gY * 0.7f, gZ + 456.0f);
+                        cvVal = std::abs(v1) + std::abs(v2);
                     }
                     
-                    if (gY <= -100) {
-                        setVoxel(x, y, z, 12); // Bedrock limit at -100
-                    } else if (gY < -5 && std::abs(cvVal) < 0.15f) { 
-                        // Modified Hytale 3D caves (Swiss Cheese tunnels)
-                        setVoxel(x, y, z, 1);
-                    } else {
-                        // Terrain placement based on depth evaluation!
-                        if (denAbove1 <= 0.0f) {
-                            if (gY < 6 && surf == 2) setVoxel(x, y, z, 9); // Beach sand near water
-                            else setVoxel(x, y, z, surf);
-                        } else if (denAbove4 <= 0.0f) {
-                            setVoxel(x, y, z, sub);
+                    if (gY == -64) setVoxel(x, y, z, 12);
+                    else if (cvVal < 0.08f) setVoxel(x, y, z, 1);
+                    else {
+                        int depth = h - gY;
+                        if (depth == 0 && gY >= 63) {
+                            if (gY < 64 && b->name != "Ocean" && b->name != "Deep Ocean") setVoxel(x, y, z, 9);
+                            else setVoxel(x, y, z, b->surfaceBlock);
+                        } else if ((x + 4) < 24 && (z + 4) < 24 && (h - gY) <= 10) {
+                            if (gY < 63) setVoxel(x, y, z, 4);
+                            else setVoxel(x, y, z, b->subSurfaceBlock);
                         } else {
-                            // Safe Ores
-                            int oreHash = std::abs((int)gX * 73 + (int)gY * 31 + (int)gZ * 17 + Config::currentSeed) % 1000;
-                            if (gY < -20) setVoxel(x, y, z, 17); // Deepslate
-                            else if (gY > 150) setVoxel(x, y, z, 25); // Tuff in high peaks!
-                            else if (gY > 100 && (oreHash < 500)) setVoxel(x, y, z, 24); // Andesite mountains!
-                            else setVoxel(x, y, z, 4); // Stone
-                            
-                            if (gY < 40 && oreHash < 10) setVoxel(x, y, z, 13); // Iron
-                            else if (gY < 10 && oreHash > 985) setVoxel(x, y, z, 15); // Gold
-                            else if (gY < -20 && oreHash > 970 && oreHash <= 985) setVoxel(x, y, z, 14); // Diamonds!
+                            uint32_t oreHash = static_cast<uint32_t>(std::abs((int)gX * 73 + (int)gY * 31 + (int)gZ * 17 + Config::currentSeed)) % 1000;
+                            uint8_t stoneType = (gY < 0) ? 17 : 4;
+                            if (gY < 40 && oreHash < 15) setVoxel(x, y, z, 13);
+                            else if (gY < 15 && oreHash > 985) setVoxel(x, y, z, 15);
+                            else if (gY < -10 && oreHash > 975 && oreHash <= 985) setVoxel(x, y, z, 14);
+                            else if (gY < 50 && oreHash > 900 && oreHash < 915) setVoxel(x, y, z, 16);
+                            else setVoxel(x, y, z, stoneType);
                         }
                     }
-                } 
-                else {
-                    // Empty space evaluation (Water, Grass)
-                    if (gY <= 5) {
-                        setVoxel(x, y, z, 5); // Still water
-                    } else {
-                        // Flora Surface Clustering
-                        float denBelow = (y >= 0) ? blockDensities[y] : -1.0f;
-                        if (denBelow > 0.0f && !wantTree && plantCluster > 0.0f) {
-                            uint32_t fMix = (uint32_t)std::abs((int)gX * 13 + (int)gZ * 7 + gY + Config::currentSeed);
-                            if (surf == 2 || surf == 30) { 
-                                if (fMix % 100 < 20) setVoxel(x, y, z, 31); 
-                                else if (fMix % 100 < 23) setVoxel(x, y, z, 32); 
-                                else setVoxel(x, y, z, 1);
-                            } else if (surf == 28) {
-                                if (fMix % 100 < 40) setVoxel(x, y, z, 32); 
-                                else if (fMix % 100 < 60) setVoxel(x, y, z, 31); 
-                                else setVoxel(x, y, z, 1);
-                            } else if (surf == 9) {
-                                if (fMix % 100 < 3) setVoxel(x, y, z, 33); 
-                                else setVoxel(x, y, z, 1);
-                            } else setVoxel(x, y, z, 1);
-                        } else {
-                            setVoxel(x, y, z, 1);
-                        }
-                    }
-                }
+                } else if (gY <= 63) setVoxel(x, y, z, 5);
+                else setVoxel(x, y, z, 1);
             }
         }
     }
-    
-    // Post process trees correctly using proper neighbor overlap
-    for (int lx = 0; lx < 24; ++lx) {
-        for (int lz = 0; lz < 24; ++lz) {
-            int tx = position_.x * CHUNK_SIZE - 4 + lx;
-            int tz = position_.z * CHUNK_SIZE - 4 + lz;
+
+    // Step 2: Decoration (Rocks, Trees, Flora)
+    FastNoiseLite flowerPatch;
+    flowerPatch.SetSeed(Config::currentSeed + 999);
+    flowerPatch.SetFrequency(0.08f);
+
+    for (int lx = 4; lx < 20; ++lx) {
+        for (int lz = 4; lz < 20; ++lz) {
+            const ColumnInfo& col = grid[lx][lz];
+            int relX = lx - 4;
+            int relZ = lz - 4;
+
+            int surfaceY = col.height;
+            uint8_t groundV = getVoxel(relX, surfaceY - position_.y * CHUNK_SIZE, relZ);
+            // Ground Validation: Restrict to soil types (Grass, Dirt, Podzol, Coarse Dirt)
+            bool isSoil = (groundV == 2 || groundV == 3 || groundV == 29 || groundV == 30);
+            if (!isSoil && groundV != 9 && groundV != 10) continue; 
             
-            float tec = tectonicNoise.GetNoise((float)tx, (float)tz);
-            float ero = erosionNoise.GetNoise((float)tx, (float)tz);
-            float tmp = tempNoise.GetNoise((float)tx, (float)tz);
-            float hum = humNoise.GetNoise((float)tx, (float)tz);
-            
-            float baseH = (tec * 0.5f + 0.5f);
-            float terrainVariance = 1.0f - std::abs(ero);
-            float finalNormalized = baseH * baseH + (terrainVariance * 0.4f * (baseH)); 
-            finalNormalized = finalNormalized * 1.25f + 0.1f;
-            
-            int th = static_cast<int>(finalNormalized * 260.0f) - 60;
-            if (th < 0 && th > -40) th -= std::pow(-th, 1.2f);
-            
-            int tChance = 0;
-            TreeType tt = TreeType::NONE;
-            
-            if (th > 5 && th < 250) {
-                if (tmp < -0.4f) {
-                    if (hum < -0.2f) { tChance = 5; tt = TreeType::PINE; }
-                    else { tChance = 60; tt = TreeType::PINE; }
-                } else if (tmp < 0.0f) {
-                    if (hum > 0.3f) { tChance = 90; tt = TreeType::PINE; }
-                    else { tChance = 15; tt = TreeType::PINE; }
-                } else if (tmp > 0.5f) {
-                    if (hum < -0.2f) {} // Desert
-                    else if (hum > 0.3f) { tChance = 150; tt = TreeType::OAK; }
-                    else { tChance = 10; tt = TreeType::OAK; }
+            int bx = relX;
+            int by = surfaceY + 1 - position_.y * CHUNK_SIZE;
+            int bz = relZ;
+
+            if (col.wantTree && isSoil) {
+                std::vector<std::pair<glm::ivec3, uint8_t>> prefab;
+                uint8_t wood = (col.tType == TreeType::BIRCH) ? 20 : 6;
+                uint8_t leaf = 7;
+                
+                if (col.tType == TreeType::JUNGLE) {
+                    // JUNGLE VARIANT (Massive 2x2 trunk)
+                    int th = 12 + (Config::currentSeed % 8);
+                    for (int y = 0; y < th; ++y) {
+                        prefab.push_back({{0, y, 0}, wood}); prefab.push_back({{1, y, 0}, wood});
+                        prefab.push_back({{0, y, 1}, wood}); prefab.push_back({{1, y, 1}, wood});
+                    }
+                    // Giant branching
+                    growBranch(0, th, 0, glm::normalize(glm::vec3(0.5f, 0.4f, 0.5f)), 8.0f, 2, col.tType, prefab);
+                    growBranch(1, th, 1, glm::normalize(glm::vec3(-0.5f, 0.4f, -0.5f)), 8.0f, 2, col.tType, prefab);
+                } else if (col.tType == TreeType::PINE) {
+                    // PINE VARIANT (Conical)
+                    int th = 9 + (Config::currentSeed % 6);
+                    for (int y = 0; y < th; ++y) prefab.push_back({{0, y, 0}, wood});
+                    for (int y = 2; y <= th + 2; ++y) {
+                        int r = (th + 2 - y) / 2 + 1;
+                        for (int dx = -r; dx <= r; ++dx) {
+                            for (int dz = -r; dz <= r; ++dz) {
+                                if (dx*dx + dz*dz <= r*r + 1) prefab.push_back({{dx, y, dz}, leaf});
+                            }
+                        }
+                    }
+                } else if (col.tType == TreeType::BIRCH) {
+                    // BIRCH VARIANT (Tall & Slim)
+                    int th = 7 + (Config::currentSeed % 4);
+                    for (int y = 0; y < th; ++y) prefab.push_back({{0, y, 0}, 20}); // White wood
+                    growBranch(0, th, 0, glm::normalize(glm::vec3(0, 1, 0)), 4.0f, 1, col.tType, prefab);
+                } else if (col.tType == TreeType::ACACIA) {
+                    // PALM/ACACIA (Leaning)
+                    glm::vec3 dir = glm::normalize(glm::vec3(0.4f, 1.0f, 0.4f));
+                    growBranch(0, 0, 0, dir, 8.0f, 0, col.tType, prefab);
+                    glm::vec3 end = dir * 8.0f;
+                    for (int dx = -3; dx <= 3; ++dx) {
+                        for (int dz = -3; dz <= 3; ++dz) {
+                            if (dx*dx + dz*dz < 10) prefab.push_back({{(int)end.x + dx, (int)end.y, (int)end.z + dz}, 7});
+                        }
+                    }
+                } else if (col.slopeNormal < 0.75f) {
+                    // SLOPE TREE
+                    glm::vec3 leanDir = glm::normalize(glm::vec3((lx < 12) ? 0.7f : -0.7f, 0.7f, 0.0f));
+                    growBranch(0, 0, 0, leanDir, 5.0f, 1, col.tType, prefab);
+                } else if (surfaceY <= 65) {
+                    // WEEPING WILLOW
+                    for(int y=0; y<6; ++y) prefab.push_back({{0, y, 0}, wood});
+                    growBranch(0, 6, 0, glm::normalize(glm::vec3(0.5f, 0.1f, 0.5f)), 5.0f, 1, col.tType, prefab);
+                    growBranch(0, 6, 0, glm::normalize(glm::vec3(-0.5f, 0.1f, -0.5f)), 5.0f, 1, col.tType, prefab);
                 } else {
-                    if (hum > 0.4f) { tChance = 20; tt = TreeType::OAK; }
-                    else if (hum > 0.1f) { tChance = 80; tt = TreeType::OAK; }
-                    else { tChance = 2; tt = TreeType::OAK; }
+                    // MASSIVE OAK
+                    int th = 5 + (Config::currentSeed % 4);
+                    for (int y = 0; y < th; ++y) prefab.push_back({{0, y, 0}, wood});
+                    growBranch(0, th, 0, glm::normalize(glm::vec3(0.7f, 0.4f, 0.3f)), 6.0f, 2, col.tType, prefab);
+                    growBranch(0, th, 0, glm::normalize(glm::vec3(-0.7f, 0.4f, -0.3f)), 6.0f, 2, col.tType, prefab);
                 }
-            }
-            
-            // Better random hash for tree spawning to eliminate linear patterns
-            auto hashV = [](int x, int z) {
-                uint32_t a = (uint32_t)x * 374761393U;
-                uint32_t b = (uint32_t)z * 668265263U;
-                a ^= a >> 13; a *= 1274126177U;
-                b ^= b >> 13; b *= 1274126177U;
-                return (a ^ b) ^ Config::currentSeed;
-            };
-            uint32_t postTreeMix = hashV(tx, tz);
-            
-            if (tChance > 0 && (postTreeMix % 1000) < (uint32_t)tChance && th > 5 && th < 250) {
-                // Loop over the tree's volume (relative to root)
-                for (int dy = 0; dy <= 8; ++dy) {
-                    int gY = th + dy;
-                    int chunkY = gY - position_.y * CHUNK_SIZE;
-                    if (chunkY < -1 || chunkY > CHUNK_SIZE) continue; 
+                generateStructure(bx, by, bz, prefab);
+            } else if (col.wantRock) {
+                std::vector<std::pair<glm::ivec3, uint8_t>> rBlocks;
+                uint8_t rt = col.rockType;
+                rBlocks.push_back({{0, 0, 0}, rt});
+                rBlocks.push_back({{1, 0, 0}, rt}); rBlocks.push_back({{-1, 0, 0}, rt});
+                rBlocks.push_back({{0, 0, 1}, rt}); rBlocks.push_back({{0, 0, -1}, rt});
+                rBlocks.push_back({{0, 1, 0}, rt});
+                generateStructure(bx, by, bz, rBlocks);
+            } else if (isSoil) {
+                // FLORA CLUMPING (Air-check protection)
+                if (getVoxel(bx, by, bz) == 0 && (by + 1 >= CHUNK_SIZE || getVoxel(bx, by + 1, bz) == 0)) {
+                    float fClump = flowerPatch.GetNoise((float)position_.x * CHUNK_SIZE + bx, (float)position_.z * CHUNK_SIZE + bz);
+                    uint32_t fSeed = static_cast<uint32_t>(relX * 73 + relZ * 31 + Config::currentSeed);
                     
-                    int rootRelX = lx - 4;
-                    int rootRelZ = lz - 4;
-                    
-                    if (tt == TreeType::OAK) {
-                        for (int dx = -2; dx <= 2; ++dx) {
-                            for (int dz = -2; dz <= 2; ++dz) {
-                                int relX = rootRelX + dx;
-                                int relZ = rootRelZ + dz;
-                                if (relX >= -1 && relX <= CHUNK_SIZE && relZ >= -1 && relZ <= CHUNK_SIZE) {
-                                    if (dx == 0 && dz == 0 && dy <= 4) {
-                                        setVoxel(relX, chunkY, relZ, 6);
-                                    } else if (dy >= 3 && dy <= 5 && std::abs(dx) <= 2 && std::abs(dz) <= 2) {
-                                        if (std::abs(dx) == 2 && std::abs(dz) == 2 && dy == 5) continue;
-                                        if (getVoxel(relX, chunkY, relZ) <= 1) setVoxel(relX, chunkY, relZ, 7);
-                                    }
-                                }
-                            }
-                        }
-                    } else if (tt == TreeType::PINE) {
-                        for (int dx = -2; dx <= 2; ++dx) {
-                            for (int dz = -2; dz <= 2; ++dz) {
-                                int relX = rootRelX + dx;
-                                int relZ = rootRelZ + dz;
-                                if (relX >= -1 && relX <= CHUNK_SIZE && relZ >= -1 && relZ <= CHUNK_SIZE) {
-                                    if (dx == 0 && dz == 0 && dy <= 7) {
-                                        setVoxel(relX, chunkY, relZ, 6);
-                                    } else if (dy >= 2 && dy <= 8) {
-                                        int rad = (8 - dy) / 2 + 1;
-                                        if (dy == 2) rad = 2; else if (dy == 3) rad = 2;
-                                        else if (dy == 4) rad = 1; else if (dy == 5) rad = 1;
-                                        else if (dy == 6) rad = 1; else rad = 0;
-                                        
-                                        if (std::abs(dx) <= rad && std::abs(dz) <= rad && rad > 0) {
-                                            if (std::abs(dx) == rad && std::abs(dz) == rad && (std::abs(tx*31+tz*17+dy)%100 < 40)) continue;
-                                            if (getVoxel(relX, chunkY, relZ) <= 1) setVoxel(relX, chunkY, relZ, 7);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if (fClump > 0.45f) { 
+                        uint8_t flower = 35; // Default Poppy
+                        if (fClump > 0.78f) flower = 37; 
+                        else if (fClump > 0.62f) flower = 36; 
+                        setVoxel(bx, by, bz, flower);
+                    } else if ((fSeed % 100) < 14) { 
+                        setVoxel(bx, by, bz, 31);
                     }
                 }
             }
@@ -626,8 +389,8 @@ bool Chunk::isFaceVisible(uint8_t currentType, int x, int y, int z, int dx, int 
     
     if (neighbor == 0 || neighbor == 1) return true;
     
-    bool isCurrentTransparent = (currentType == 5 || currentType == 7 || currentType == 21 || currentType == 31 || currentType == 32 || currentType == 33);
-    bool isNeighborTransparent = (neighbor == 5 || neighbor == 7 || neighbor == 21 || neighbor == 31 || neighbor == 32 || neighbor == 33);
+    bool isCurrentTransparent = (currentType == 5 || currentType == 7 || currentType == 21 || (currentType >= 31 && currentType <= 38) || currentType == 40 || currentType == 42 || currentType == 44);
+    bool isNeighborTransparent = (neighbor == 5 || neighbor == 7 || neighbor == 21 || (neighbor >= 31 && neighbor <= 38) || neighbor == 40 || neighbor == 42 || neighbor == 44);
     
     if (!isCurrentTransparent && isNeighborTransparent) return true;
     if (isCurrentTransparent && isNeighborTransparent && currentType != neighbor) return true;
@@ -642,16 +405,16 @@ void Chunk::addFace(int x, int y, int z, int dir, uint8_t type, int width, int h
 
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 
-    if (type == 2 || type == 7 || type == 11 || type == 31 || type == 32) {
+    if (type == 2 || type == 7 || type == 11 || (type >= 31 && type <= 38)) {
         // Biome Polytone math based on Temperature and Humidity
         float t = glm::clamp(temp * 0.5f + 0.5f, 0.0f, 1.0f);
         float h = glm::clamp(hum * 0.5f + 0.5f, 0.0f, 1.0f);
 
-        float rVal = glm::mix(glm::mix(0.50f, 0.25f, h), glm::mix(0.75f, 0.15f, h), t);
-        float gVal = glm::mix(glm::mix(0.65f, 0.55f, h), glm::mix(0.75f, 0.85f, h), t);
-        float bVal = glm::mix(glm::mix(0.55f, 0.35f, h), glm::mix(0.25f, 0.15f, h), t);
+        float rVal = glm::mix(glm::mix(0.45f, 0.25f, h), glm::mix(0.65f, 0.15f, h), t);
+        float gVal = glm::mix(glm::mix(0.60f, 0.50f, h), glm::mix(0.70f, 0.78f, h), t);
+        float bVal = glm::mix(glm::mix(0.50f, 0.35f, h), glm::mix(0.25f, 0.15f, h), t);
         
-        if (type == 7 || type == 31 || type == 32) { 
+        if (type == 7 || (type >= 31 && type <= 38)) { 
             // Leaves and foliage are slightly darker
             rVal *= 0.8f; gVal *= 0.8f; bVal *= 0.8f; 
             if (dir == 2 || dir == 3) { r = rVal; g = gVal; b = bVal; } 
@@ -739,12 +502,12 @@ void Chunk::addCrossFace(int x, int y, int z, uint8_t type, float temp, float hu
     float layer = TextureAtlas::getUVForBlock(type, 0); 
     float r = 1.0f, g = 1.0f, b = 1.0f, a = 0.85f;
     
-    if (type == 31 || type == 32 || type == 34) { // tint plants & kelp
+    if (type == 7 || (type >= 31 && type <= 38)) { // tint leaves, plants, kelp & flowers
         float t = glm::clamp(temp * 0.5f + 0.5f, 0.0f, 1.0f);
         float h = glm::clamp(hum * 0.5f + 0.5f, 0.0f, 1.0f);
-        r = glm::mix(glm::mix(0.50f, 0.25f, h), glm::mix(0.75f, 0.15f, h), t) * 0.85f;
-        g = glm::mix(glm::mix(0.65f, 0.55f, h), glm::mix(0.75f, 0.85f, h), t) * 0.85f;
-        b = glm::mix(glm::mix(0.55f, 0.35f, h), glm::mix(0.25f, 0.15f, h), t) * 0.85f;
+        r = glm::mix(glm::mix(0.45f, 0.25f, h), glm::mix(0.65f, 0.15f, h), t) * 0.8f;
+        g = glm::mix(glm::mix(0.60f, 0.50f, h), glm::mix(0.70f, 0.78f, h), t) * 0.8f;
+        b = glm::mix(glm::mix(0.50f, 0.35f, h), glm::mix(0.25f, 0.15f, h), t) * 0.8f;
     }
     
     auto addQuad = [&](float x1, float z1, float x2, float z2, int normD) {
@@ -821,14 +584,14 @@ void Chunk::generateMesh() {
                     else { x = u; y = v; z = slice; }
                     
                     uint8_t type = getVoxel(x, y, z);
-                    bool isCross = (type >= 31 && type <= 34); 
+                    bool isCross = (type >= 31 && type <= 38); 
                     
-                    if (isCross) {
-                        if (dir == 0) addCrossFace(x, y, z, type, tempMap[x][z], humMap[x][z]);
-                        // Plant bypasses solid greedy meshing!
-                        continue;
+                    if (dir == 0 && (isCross || type == 7)) {
+                        // Add cross planes for plants/flowers OR internal depth planes for leaves
+                        addCrossFace(x, y, z, type, tempMap[x][z], humMap[x][z]);
                     }
-
+                    
+                    if (isCross) continue;
                     if (type > 1 && isFaceVisible(type, x, y, z, DIRS[dir][0], DIRS[dir][1], DIRS[dir][2])) {
                         mask[u][v] = type;
                     }
@@ -877,5 +640,55 @@ void Chunk::generateMesh() {
                 }
             }
         }
+    }
+}
+void Chunk::growBranch(int bx, int by, int bz, glm::vec3 dir, float length, int depth, TreeType type, std::vector<std::pair<glm::ivec3, uint8_t>>& bks) {
+    uint8_t wood = 6;
+    uint8_t leaf = 7;
+    if (type == TreeType::BIRCH) { wood = 39; leaf = 40; }
+    else if (type == TreeType::PINE) { wood = 41; leaf = 42; }
+    else if (type == TreeType::JUNGLE) { wood = 43; leaf = 44; }
+    
+    int steps = static_cast<int>(length * 2.0f);
+    if (steps < 4) steps = 4;
+    for (int i = 0; i < steps; ++i) {
+        glm::vec3 p = dir * (length * (float)i / (float)steps);
+        bks.push_back({{bx + (int)p.x, by + (int)p.y, bz + (int)p.z}, wood});
+        // Extra thickness for main trunk
+        if (length > 6.0f) {
+            bks.push_back({{bx + (int)p.x + 1, by + (int)p.y, bz + (int)p.z}, wood});
+            bks.push_back({{bx + (int)p.x, by + (int)p.y, bz + (int)p.z + 1}, wood});
+        }
+    }
+    
+    glm::vec3 end = dir * length;
+    int ex = bx + (int)end.x;
+    int ey = by + (int)end.y;
+    int ez = bz + (int)end.z;
+
+    // LEAF BALL
+    int leafR = (depth == 0) ? 3 : 2;
+    for (int dy = -leafR; dy <= leafR; ++dy) {
+        for (int dx = -leafR; dx <= leafR; ++dx) {
+            for (int dz = -leafR; dz <= leafR; ++dz) {
+                if (dx*dx + dy*dy + dz*dz <= leafR * leafR + 1) {
+                    bks.push_back({{ex + dx, ey + dy, ez + dz}, leaf});
+                }
+            }
+        }
+    }
+
+    if (depth <= 0) return;
+
+    // More branches for density
+    int numBranches = 3 + (depth % 2);
+    for (int i = 0; i < numBranches; ++i) {
+        float angle = (float)i * 2.0f * 3.14159f / (float)numBranches;
+        float r1 = ((Config::currentSeed + i) % 100) / 100.0f;
+        
+        glm::vec3 nextDir = glm::normalize(dir + glm::vec3(cos(angle) * 0.7f, 0.3f + r1 * 0.4f, sin(angle) * 0.7f));
+        nextDir = glm::normalize(nextDir + glm::vec3(0, 0.5f, 0)); // Light seeking
+        
+        growBranch(ex, ey, ez, nextDir, length * 0.8f, depth - 1, type, bks);
     }
 }

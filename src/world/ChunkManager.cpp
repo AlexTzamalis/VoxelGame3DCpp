@@ -9,6 +9,7 @@
 #include <GL/glew.h>
 
 ChunkManager::ChunkManager() : isRunning_(true) {
+    initNoise();
     glGenVertexArrays(1, &mdiVAO_);
     glGenBuffers(1, &mdiVBO_);
     glGenBuffers(1, &mdiEBO_);
@@ -49,6 +50,48 @@ ChunkManager::~ChunkManager() {
     }
 }
 
+void ChunkManager::initNoise() {
+    // V1 Legacy Noises (used for Flat/Simple worlds)
+    tectonicNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    tectonicNoise_.SetSeed(Config::currentSeed);
+    tectonicNoise_.SetFrequency(0.005f);
+    tectonicNoise_.SetFractalType(FastNoiseLite::FractalType_FBm);
+    tectonicNoise_.SetFractalOctaves(5);
+
+    caveNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    caveNoise_.SetSeed(Config::currentSeed + 9999);
+    caveNoise_.SetFrequency(0.012f); // Lower for larger, snaking tunnels
+    caveNoise_.SetFractalType(FastNoiseLite::FractalType_FBm);
+    caveNoise_.SetFractalOctaves(4);
+
+    // V2 High-Fidelity Hybrid Noises - SMOOTHED
+    erosionNoise_.SetSeed(Config::currentSeed + 5678);
+    erosionNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    erosionNoise_.SetFrequency(0.0015f); // Slightly lower for smoother erosion
+    erosionNoise_.SetFractalType(FastNoiseLite::FractalType_DomainWarpProgressive);
+
+    tempNoise_.SetSeed(Config::currentSeed + 9101);
+    tempNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    tempNoise_.SetFrequency(0.0025f); // Larger climate zones
+
+    humNoise_.SetSeed(Config::currentSeed + 1121);
+    humNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    humNoise_.SetFrequency(0.0025f); // Larger climate zones
+
+    densityNoise_.SetSeed(Config::currentSeed + 9999);
+    densityNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    densityNoise_.SetFrequency(0.008f); // Much lower for smoother 3D features
+    densityNoise_.SetFractalType(FastNoiseLite::FractalType_FBm);
+    densityNoise_.SetFractalOctaves(3);
+
+    clusterNoise_.SetSeed(Config::currentSeed + 7777);
+    clusterNoise_.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    clusterNoise_.SetFrequency(0.008f);
+    
+    // Tectonic (Continentalness) tuning
+    tectonicNoise_.SetFrequency(0.0012f); // Large scale landmasses
+}
+
 void ChunkManager::workerThreadFunc() {
     while (isRunning_) {
         glm::ivec3 taskPos;
@@ -61,23 +104,6 @@ void ChunkManager::workerThreadFunc() {
             taskPos = pendingTasks_.back();
             pendingTasks_.pop_back();
         }
-
-        // 1. Base terrain height (Continents / Hills)
-        FastNoiseLite localHeightNoise;
-        localHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        // Bind dynamic world seed!
-        localHeightNoise.SetSeed(Config::currentSeed); 
-        localHeightNoise.SetFrequency(0.005f);       
-        localHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-        localHeightNoise.SetFractalOctaves(5);      
-
-        // 2. Caverns - Natural FBm carving
-        FastNoiseLite localCaveNoise;
-        localCaveNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-        localCaveNoise.SetSeed(Config::currentSeed + 9999); 
-        localCaveNoise.SetFrequency(0.03f); 
-        localCaveNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-        localCaveNoise.SetFractalOctaves(3); 
 
         // Heavy Lifting off the main thread
         if (taskPos.y == 999999) {
@@ -95,9 +121,9 @@ void ChunkManager::workerThreadFunc() {
         std::vector<uint8_t> savedData(Chunk::PADDED_SIZE * Chunk::PADDED_SIZE * Chunk::PADDED_SIZE);
         if (WorldManager::loadChunk(taskPos, savedData)) {
             chunk->setVoxels(savedData);
-            chunk->isModified_ = true; // Still flag true so it persists safely
+            chunk->isModified_ = true;
         } else {
-            chunk->generateTerrain(localHeightNoise, localCaveNoise); 
+            chunk->generateTerrain(tectonicNoise_, erosionNoise_, tempNoise_, humNoise_, densityNoise_, caveNoise_, clusterNoise_); 
         }
         
         chunk->generateMesh();
@@ -226,52 +252,55 @@ void ChunkManager::update(const Camera& camera) {
         std::floor(cameraPosition.z / Chunk::CHUNK_SIZE)
     );
 
-    // CRITICAL OPTIMIZATION: Only run the expensive O(n³) scan when camera moves to a new chunk
+    // CRITICAL OPTIMIZATION: Only run the expensive scan when camera moves to a new chunk
     if (cameraChunkPos != lastScanChunkPos_) {
         lastScanChunkPos_ = cameraChunkPos;
         
-        // Build active set for unloading
-        std::unordered_set<glm::ivec3, IVec3Hash> activeKeys;
+        // Priority Loading (Spiral Scan)
         std::vector<glm::ivec3> newTasks;
+        int RD = Config::renderDistance;
+        int RDY = 16; // Vertical range
 
-        for (int x = -Config::renderDistance; x <= Config::renderDistance; ++x) {
-            for (int z = -Config::renderDistance; z <= Config::renderDistance; ++z) {
-                if (x * x + z * z > Config::renderDistance * Config::renderDistance) continue;
-                // Generate FULL vertical columns to prevent void gaps and preserve bedrock/mountains
-                for (int gy = -8; gy <= 28; ++gy) {
-                    glm::ivec3 chunkPos = glm::ivec3(cameraChunkPos.x + x, gy, cameraChunkPos.z + z);
-                    activeKeys.insert(chunkPos);
+        // Clear stale tasks when moving to prioritize new chunks
+        {
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            pendingTasks_.clear(); 
+            // Also need to clear generatingChunks_ carefully or we leak "in-progress" markers
+            generatingChunks_.clear();
+            generatingLODs_.clear();
+        }
 
-                    if (chunks_.find(chunkPos) == chunks_.end() && generatingChunks_.find(chunkPos) == generatingChunks_.end()) {
-                        generatingChunks_[chunkPos] = true;
-                        newTasks.push_back(chunkPos);
+        // Spiral scan from outside to inside (so closest is at the BACK of the queue)
+        for (int r = RD; r >= 0; r--) {
+            for (int x = -r; x <= r; x++) {
+                for (int z = -r; z <= r; z++) {
+                    if (std::abs(x) != r && std::abs(z) != r) continue;
+                    if (x * x + z * z > RD * RD) continue;
+
+                    for (int gy = -4; gy <= RDY; gy++) {
+                        glm::ivec3 chunkPos = cameraChunkPos + glm::ivec3(x, gy - cameraChunkPos.y, z);
+                        if (chunks_.find(chunkPos) == chunks_.end()) {
+                            newTasks.push_back(chunkPos);
+                            generatingChunks_[chunkPos] = true;
+                        }
                     }
                 }
             }
         }
         
-        // Queue LOD Tasks
-        // Spiral Search for LODs (Faster & better prioritization)
+        // Background LOD Scan (Spiral)
         if (Config::enableLOD) {
-            int maxRadius = Config::renderDistance + Config::lodDistance;
-            int renderDistSq = Config::renderDistance * Config::renderDistance;
-            
-            // Increase budget for heavy distance worlds
-            int lodCount = 0;
-            int lodBudget = 2000;
-            int lodLimitSq = maxRadius * maxRadius;
-            for (int r = Config::renderDistance + 1; r <= maxRadius && lodCount < lodBudget; ++r) {
-                for (int x = -r; x <= r && lodCount < lodBudget; ++x) {
-                    for (int z = -r; z <= r && lodCount < lodBudget; ++z) {
-                        if (x*x + z*z < (r-1)*(r-1) || x*x + z*z > r*r) continue; 
-                        if (x*x + z*z > lodLimitSq) continue;
-                        if (x*x + z*z <= renderDistSq) continue;
-                        
-                        glm::ivec2 lodPos = glm::ivec2(cameraChunkPos.x + x, cameraChunkPos.z + z);
+            int maxR = RD + Config::lodDistance;
+            for (int r = maxR; r > RD; r--) {
+                for (int x = -r; x <= r; x++) {
+                    for (int z = -r; z <= r; z++) {
+                        if (std::abs(x) != r && std::abs(z) != r) continue;
+                        if (x * x + z * z > maxR * maxR) continue;
+
+                        glm::ivec2 lodPos(cameraChunkPos.x + x, cameraChunkPos.z + z);
                         if (lodColumns_.find(lodPos) == lodColumns_.end() && generatingLODs_.find(lodPos) == generatingLODs_.end()) {
+                            newTasks.push_back(glm::ivec3(lodPos.x, 999999, lodPos.y));
                             generatingLODs_[lodPos] = true;
-                            newTasks.push_back(glm::ivec3(lodPos.x, 999999, lodPos.y)); 
-                            lodCount++;
                         }
                     }
                 }
@@ -280,14 +309,6 @@ void ChunkManager::update(const Camera& camera) {
         
         if (!newTasks.empty()) {
             std::lock_guard<std::mutex> lock(queueMutex_);
-            // Efficient prioritization: Only sort the new batch to find closest ones
-            std::sort(newTasks.begin(), newTasks.end(), [&](const glm::ivec3& a, const glm::ivec3& b) {
-                glm::vec3 pa = (a.y == 999999) ? glm::vec3(a.x, 64, a.z) : glm::vec3(a);
-                glm::vec3 pb = (b.y == 999999) ? glm::vec3(b.x, 64, b.z) : glm::vec3(b);
-                float distA = glm::distance(pa, cameraPosition);
-                float distB = glm::distance(pb, cameraPosition);
-                return distA > distB; // Closest at the back
-            });
             pendingTasks_.insert(pendingTasks_.end(), newTasks.begin(), newTasks.end());
             cv_.notify_all();
         }
@@ -522,29 +543,68 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
     glm::vec3 camPos = camera.position();
     float limitSq = (radialDistLimit + 128.0f) * (radialDistLimit + 128.0f);
 
-    // Send global identity matrix once! 
+    // Dynamic identity matrix
     glm::mat4 globalModel = glm::mat4(1.0f);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(globalModel));
 
-    // Rebuild cached MDI commands only when dirty
-    if (mdiCommandsDirty_) {
-        cachedOpaqueCmds_.clear();
-        cachedTransCmds_.clear();
-        cachedOpaqueCmds_.reserve(columns_.size());
-        cachedTransCmds_.reserve(columns_.size());
+    // Every frame, we build a fresh draw list based on the CURRENT camera frustum.
+    // This fixes the "Directional Rendering Gap" where culling was stale after rotating.
+    // We reuse the class members to avoid re-allocating memory every frame.
+    cachedOpaqueCmds_.clear();
+    cachedTransCmds_.clear();
 
-        for (const auto& [pos, column] : columns_) {
-            if (!column->inVRAM) continue;
+    // 1. Process Main Terrain Columns
+    for (const auto& [pos, column] : columns_) {
+        if (!column->inVRAM) continue;
+        
+        // Radial Distance Culling (Matches fog)
+        float distX = (float)pos.x * Chunk::CHUNK_SIZE + 8.0f - camPos.x;
+        float distZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
+        if (distX*distX + distZ*distZ > limitSq) continue;
+
+        // Per-Frame Frustum Culling
+        if (Config::frustumCulling && !bypassFrustum) {
+            // Use significantly larger bounds for culling to prevent mountain/valley clipping
+            // and extra X/Z padding to prevent screen-edge popping.
+            glm::vec3 min(pos.x * Chunk::CHUNK_SIZE - 8.0f, -512.0f, pos.y * Chunk::CHUNK_SIZE - 8.0f);
+            glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 24.0f, 1024.0f, pos.y * Chunk::CHUNK_SIZE + 24.0f);
+            if (!camera.isBoxInFrustum(min, max)) continue;
+        }
+
+        if (column->opaqueCount > 0) {
+            DrawElementsIndirectCommand cmd;
+            cmd.count = column->opaqueCount;
+            cmd.instanceCount = 1;
+            cmd.firstIndex = column->indexOffset;
+            cmd.baseVertex = column->vertexOffset;
+            cmd.baseInstance = 0;
+            cachedOpaqueCmds_.push_back(cmd);
+        }
+        
+        if (column->transparentCount > 0) {
+            DrawElementsIndirectCommand cmd;
+            cmd.count = column->transparentCount;
+            cmd.instanceCount = 1;
+            cmd.firstIndex = column->transparentIndexOffset;
+            cmd.baseVertex = column->vertexOffset;
+            cmd.baseInstance = 0;
+            cachedTransCmds_.push_back(cmd);
+        }
+    }
+    
+    // 2. Process LOD Columns
+    if (Config::enableLOD) {
+        for (const auto& [pos, column] : lodColumns_) {
+            if (!column->inVRAM || columns_.find(pos) != columns_.end()) continue;
             
-            // Radial Distance Culling (Matches fog and prevents square 'cuts')
-            float distX = (float)pos.x * Chunk::CHUNK_SIZE + 8.0f - camPos.x;
-            float distZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
-            if (distX*distX + distZ*distZ > limitSq) continue;
+            float lodDistX = (float)pos.x * Chunk::CHUNK_SIZE + 8.0f - camPos.x;
+            float lodDistZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
+            if (lodDistX*lodDistX + lodDistZ*lodDistZ > limitSq) continue;
 
-            // Frustum Culling (Re-enabled with proper column alignment)
             if (Config::frustumCulling && !bypassFrustum) {
-                glm::vec3 min(pos.x * Chunk::CHUNK_SIZE, -128, pos.y * Chunk::CHUNK_SIZE);
-                glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 16, 256, pos.y * Chunk::CHUNK_SIZE + 16);
+                // LOD Columns need extra safety as they are coarser
+                glm::vec3 min(pos.x * Chunk::CHUNK_SIZE - 12.0f, -512.0f, pos.y * Chunk::CHUNK_SIZE - 12.0f);
+                glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 28.0f, 1024.0f, pos.y * Chunk::CHUNK_SIZE + 28.0f);
                 if (!camera.isBoxInFrustum(min, max)) continue;
             }
 
@@ -557,60 +617,22 @@ void ChunkManager::render(unsigned int shaderProgram, const Camera& camera, bool
                 cmd.baseInstance = 0;
                 cachedOpaqueCmds_.push_back(cmd);
             }
-            
-            if (column->transparentCount > 0) {
-                DrawElementsIndirectCommand cmd;
-                cmd.count = column->transparentCount;
-                cmd.instanceCount = 1;
-                cmd.firstIndex = column->transparentIndexOffset;
-                cmd.baseVertex = column->vertexOffset;
-                cmd.baseInstance = 0;
-                cachedTransCmds_.push_back(cmd);
-            }
         }
-        
-        if (Config::enableLOD) {
-            for (const auto& [pos, column] : lodColumns_) {
-                if (!column->inVRAM || columns_.find(pos) != columns_.end()) continue;
-                
-                // Radial Distance Culling for LOD
-                float lodDistX = (float)pos.x * Chunk::CHUNK_SIZE + 8.0f - camPos.x;
-                float lodDistZ = (float)pos.y * Chunk::CHUNK_SIZE + 8.0f - camPos.z;
-                if (lodDistX*lodDistX + lodDistZ*lodDistZ > limitSq) continue;
-
-                // Frustum Culling for LOD
-                if (Config::frustumCulling && !bypassFrustum) {
-                    glm::vec3 min(pos.x * Chunk::CHUNK_SIZE, -128, pos.y * Chunk::CHUNK_SIZE);
-                    glm::vec3 max(pos.x * Chunk::CHUNK_SIZE + 16, 256, pos.y * Chunk::CHUNK_SIZE + 16);
-                    if (!camera.isBoxInFrustum(min, max)) continue;
-                }
-
-                if (column->opaqueCount > 0) {
-                    DrawElementsIndirectCommand cmd;
-                    cmd.count = column->opaqueCount;
-                    cmd.instanceCount = 1;
-                    cmd.firstIndex = column->indexOffset;
-                    cmd.baseVertex = column->vertexOffset;
-                    cmd.baseInstance = 0;
-                    cachedOpaqueCmds_.push_back(cmd);
-                }
-            }
-        }
-        
-        mdiCommandsDirty_ = false;
     }
+    
+    mdiCommandsDirty_ = false; // We processed the current VRAM state
 
     glBindVertexArray(mdiVAO_);
     
     if (!cachedOpaqueCmds_.empty()) {
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, mdiIndirectBufferOpaque_);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedOpaqueCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedOpaqueCmds_.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedOpaqueCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedOpaqueCmds_.data(), GL_STREAM_DRAW);
         glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, cachedOpaqueCmds_.size(), 0);
     }
     
     if (!cachedTransCmds_.empty()) {
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, mdiIndirectBufferTrans_);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedTransCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedTransCmds_.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, cachedTransCmds_.size() * sizeof(DrawElementsIndirectCommand), cachedTransCmds_.data(), GL_STREAM_DRAW);
         glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, cachedTransCmds_.size(), 0);
     }
     
@@ -717,14 +739,6 @@ bool ChunkManager::isChunkColumnLoaded(int cx, int cy, int cz) const {
 std::unique_ptr<ChunkColumn> ChunkManager::generateLODColumn(glm::ivec2 gridPos) {
     auto col = std::make_unique<ChunkColumn>(gridPos);
     
-    // SYNCED NOISE WITH WORLD GEN V2
-    FastNoiseLite heightNoise;
-    heightNoise.SetSeed(Config::currentSeed);
-    heightNoise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-    heightNoise.SetFrequency(0.005f);
-    heightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
-    heightNoise.SetFractalOctaves(4);
-    
     int startIdx = 0;
     int step = Config::lodQuality; 
     if (step < 1) step = 1;
@@ -734,30 +748,31 @@ std::unique_ptr<ChunkColumn> ChunkManager::generateLODColumn(glm::ivec2 gridPos)
             float gX = (float)gridPos.x * Chunk::CHUNK_SIZE + x;
             float gZ = (float)gridPos.y * Chunk::CHUNK_SIZE + z;
             
-            float hVal = heightNoise.GetNoise(gX, gZ);
-            float tVal = heightNoise.GetNoise(gZ * 0.45f + 2137.0f, gX * 0.45f - 1492.0f);
-            float cVal = heightNoise.GetNoise(gX * 0.1f, gZ * 0.1f); // Lower freq Continental Noise
+            float tec = tectonicNoise_.GetNoise(gX, gZ);
+            float ero = erosionNoise_.GetNoise(gX, gZ);
+            float tmp = tempNoise_.GetNoise(gX, gZ);
+            float hum = humNoise_.GetNoise(gX, gZ);
             
-            const Biome* biome = BiomeManager::getBiome(cVal, tVal);
-            int h = biome->getTerrainHeight(hVal);
+            const Biome* biome = BiomeManager::getBiome(tec, tmp, hum);
+            int height = BiomeManager::getGlobalHeight(tec, ero);
             
             float vx = gX;
             float vz = gZ;
-            float vh = (float)h;
+            float vh = (float)height;
             
             uint8_t surf = biome->surfaceBlock;
-            if (h <= 63) {
+            if (height <= 63) {
                 vh = 63.0f;
                 surf = 5; // Water surface
             }
             
             float rVal = 1.0f, gVal = 1.0f, bVal = 1.0f;
             if (surf == 2 || surf == 11) { // Tint grass
-                float t = glm::clamp(tVal * 0.5f + 0.5f, 0.0f, 1.0f);
-                float hm = glm::clamp(hVal * 0.5f + 0.5f, 0.0f, 1.0f);
-                rVal = glm::mix(glm::mix(0.50f, 0.25f, hm), glm::mix(0.75f, 0.15f, hm), t);
-                gVal = glm::mix(glm::mix(0.65f, 0.55f, hm), glm::mix(0.75f, 0.85f, hm), t);
-                bVal = glm::mix(glm::mix(0.55f, 0.35f, hm), glm::mix(0.25f, 0.15f, hm), t);
+                float t = glm::clamp(tmp * 0.5f + 0.5f, 0.0f, 1.0f);
+                float hm = glm::clamp(hum * 0.5f + 0.5f, 0.0f, 1.0f);
+                rVal = glm::mix(glm::mix(0.45f, 0.25f, hm), glm::mix(0.65f, 0.15f, hm), t);
+                gVal = glm::mix(glm::mix(0.60f, 0.50f, hm), glm::mix(0.70f, 0.78f, hm), t);
+                bVal = glm::mix(glm::mix(0.50f, 0.35f, hm), glm::mix(0.25f, 0.15f, hm), t);
             }
             
             float tid = TextureAtlas::getUVForBlock(surf, 2);

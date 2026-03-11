@@ -59,6 +59,18 @@ void BlockRegistry::init() {
     registerBlock(BlockData(32, "fern", "fern", true, false));
     registerBlock(BlockData(33, "dead_bush", "dead_bush", true, false));
     registerBlock(BlockData(34, "kelp", "kelp", true, false));
+    registerBlock(BlockData(35, "poppy", "poppy", true, false));
+    registerBlock(BlockData(36, "dandelion", "dandelion", true, false));
+    registerBlock(BlockData(37, "blue_orchid", "blue_orchid", true, false));
+    registerBlock(BlockData(38, "oxeye_daisy", "oxeye_daisy", true, false));
+
+    // New Wood/Leaf types
+    registerBlock(BlockData(39, "birch_log", "birch_log_top", "birch_log", "birch_log_top", false, true));
+    registerBlock(BlockData(40, "birch_leaves", "birch_leaves", true, true));
+    registerBlock(BlockData(41, "spruce_log", "spruce_log_top", "spruce_log", "spruce_log_top", false, true));
+    registerBlock(BlockData(42, "spruce_leaves", "spruce_leaves", true, true));
+    registerBlock(BlockData(43, "jungle_log", "jungle_log_top", "jungle_log", "jungle_log_top", false, true));
+    registerBlock(BlockData(44, "jungle_leaves", "jungle_leaves", true, true));
 }
 
 void BlockRegistry::registerBlock(const BlockData& data) {

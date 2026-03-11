@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <glm/glm.hpp>
 
 enum class GameMode {
     SURVIVAL,
@@ -61,13 +62,21 @@ namespace Config {
     extern bool enableShadows;
     extern float shadowIntensity;      // 0.0 = no shadow, 1.0 = pitch black
     extern int shadowMapSize;          // 1024, 2048, 4096
+    extern float shadowSoftness;
+    extern float shadowBias;
     
     // Water
     extern int waterMode;              // 0 = Basic flat, 1 = Advanced (waves, reflections)
+    extern float waterTransparency;
+    extern float waterWaveSpeed;
+    extern float waterWaveHeight;
+    extern bool enableWaterReflections;
     
     // Lighting  
     extern bool enableFog;
     extern float fogDensity;
+    extern glm::vec3 fogColor;
+    extern float fogHeightFalloff;
     extern bool enableDirectionalFaceShading; // Darkens N/S/E/W faces
     extern float ambientBrightness;    // Min ambient light (brighter nights)
     extern float dayTimeSpeed;
@@ -83,20 +92,25 @@ namespace Config {
     extern float cloudHeight;
     extern float cloudScale;
     extern float cloudSpeed;
-    extern float cloudDensity;    // New
-    extern float cloudThickness;  // New
-    extern int cloudQuality;      // New (steps)
+    extern float cloudDensity;
+    extern float cloudThickness;
+    extern int cloudQuality;
     
     extern float saturation;
     extern float contrast;
 
-    // Atmosphere & Sun
-    extern float sunSize;         // New
-    extern float sunIntensity;    // New
-    extern float godRaysIntensity; // New
+    // Atmosphere & Sun/Moon
+    extern float sunSize;
+    extern float sunIntensity;
+    extern glm::vec3 sunColor;
+    extern float moonSize;
+    extern float moonIntensity;
+    extern float godRaysIntensity;
+    extern float starDensity;
+    extern float milkyWayIntensity;
     
     // Preset
-    extern GraphicsPreset graphicsPreset; // New
+    extern GraphicsPreset graphicsPreset;
 
     // Keybind save/load helpers
     void loadKeybinds();

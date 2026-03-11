@@ -27,25 +27,33 @@ namespace Config {
     int lodDistance = 256; // 4km horizon
     int lodQuality = 2;   // High detail distant terrain (8x8 grid)
     
-    // Master shader toggle
+    // === Granular Shader Settings ===
     bool enableShaders = true;
     
     // Shadows
     bool enableShadows = true;
-    float shadowIntensity = 0.45f;    // Gentle gray, not pitch black
+    float shadowIntensity = 0.45f;
     int shadowMapSize = 2048;
+    float shadowSoftness = 1.0f;
+    float shadowBias = 0.005f;
     
     // Water
-    int waterMode = 1;                // 0=Basic, 1=Advanced
+    int waterMode = 1;
+    float waterTransparency = 0.6f;
+    float waterWaveSpeed = 1.0f;
+    float waterWaveHeight = 0.2f;
+    bool enableWaterReflections = true;
     
-    // Lighting
+    // Lighting  
     bool enableFog = true;
     float fogDensity = 0.005f;
+    glm::vec3 fogColor = glm::vec3(0.5f, 0.6f, 0.7f);
+    float fogHeightFalloff = 0.02f;
     bool enableDirectionalFaceShading = true;
-    float ambientBrightness = 0.35f;  // Brighter, richer environment lighting
+    float ambientBrightness = 0.35f;
     float dayTimeSpeed = 0.0021816f;
     
-    // Wind
+    // Wind effects
     bool enableLeafWind = true;
     
     // Ultra mode
@@ -53,20 +61,25 @@ namespace Config {
     
     // Clouds
     bool enableClouds = true;
-    float cloudHeight = 150.0f;
-    float cloudScale = 0.0008f;
-    float cloudSpeed = 0.015f; 
-    float cloudDensity = 0.45f;
-    float cloudThickness = 100.0f;
-    int cloudQuality = 24;
+    float cloudHeight = 400.0f;
+    float cloudScale = 0.00045f;
+    float cloudSpeed = 0.012f;
+    float cloudDensity = 0.5f;
+    float cloudThickness = 120.0f;
+    int cloudQuality = 16;
     
     float saturation = 0.85f;
     float contrast = 1.05f;
 
-    // Atmosphere & Sun
-    float sunSize = 0.0008f;
-    float sunIntensity = 12.0f;
+    // Atmosphere & Sun/Moon
+    float sunSize = 0.012f; // ~0.7 degrees (Real is 0.5)
+    float sunIntensity = 1.0f;
+    glm::vec3 sunColor = glm::vec3(1.0f, 0.9f, 0.8f);
+    float moonSize = 0.01f;
+    float moonIntensity = 0.5f;
     float godRaysIntensity = 0.15f;
+    float starDensity = 0.5f;
+    float milkyWayIntensity = 0.3f;
     
     // Preset
     GraphicsPreset graphicsPreset = GraphicsPreset::MEDIUM;
@@ -114,8 +127,19 @@ namespace Config {
                 else if (key == "ENABLE_SHADOWS") file >> enableShadows;
                 else if (key == "SHADOW_INTENSITY") file >> shadowIntensity;
                 else if (key == "SHADOW_MAP_SIZE") file >> shadowMapSize;
+                else if (key == "SHADOW_SOFTNESS") file >> shadowSoftness;
+                else if (key == "SHADOW_BIAS") file >> shadowBias;
                 else if (key == "WATER_MODE") file >> waterMode;
+                else if (key == "WATER_TRANSPARENCY") file >> waterTransparency;
+                else if (key == "WATER_WAVE_SPEED") file >> waterWaveSpeed;
+                else if (key == "WATER_WAVE_HEIGHT") file >> waterWaveHeight;
+                else if (key == "WATER_REFLECTIONS") file >> enableWaterReflections;
                 else if (key == "ENABLE_FOG") file >> enableFog;
+                else if (key == "FOG_DENSITY") file >> fogDensity;
+                else if (key == "FOG_COLOR_R") file >> fogColor.r;
+                else if (key == "FOG_COLOR_G") file >> fogColor.g;
+                else if (key == "FOG_COLOR_B") file >> fogColor.b;
+                else if (key == "FOG_HEIGHT_FALLOFF") file >> fogHeightFalloff;
                 else if (key == "FACE_SHADING") file >> enableDirectionalFaceShading;
                 else if (key == "AMBIENT_BRIGHTNESS") file >> ambientBrightness;
                 else if (key == "DAY_SPEED") file >> dayTimeSpeed;
@@ -132,7 +156,14 @@ namespace Config {
                 else if (key == "CONTRAST") file >> contrast;
                 else if (key == "SUN_SIZE") file >> sunSize;
                 else if (key == "SUN_INTENSITY") file >> sunIntensity;
+                else if (key == "SUN_COLOR_R") file >> sunColor.r;
+                else if (key == "SUN_COLOR_G") file >> sunColor.g;
+                else if (key == "SUN_COLOR_B") file >> sunColor.b;
+                else if (key == "MOON_SIZE") file >> moonSize;
+                else if (key == "MOON_INTENSITY") file >> moonIntensity;
                 else if (key == "GOD_RAYS_INTENSITY") file >> godRaysIntensity;
+                else if (key == "STAR_DENSITY") file >> starDensity;
+                else if (key == "MILKY_WAY_INTENSITY") file >> milkyWayIntensity;
                 else if (key == "GRAPHICS_PRESET") {
                     int p; file >> p;
                     graphicsPreset = static_cast<GraphicsPreset>(p);
@@ -162,8 +193,19 @@ namespace Config {
                  << "ENABLE_SHADOWS " << enableShadows << "\n"
                  << "SHADOW_INTENSITY " << shadowIntensity << "\n"
                  << "SHADOW_MAP_SIZE " << shadowMapSize << "\n"
+                 << "SHADOW_SOFTNESS " << shadowSoftness << "\n"
+                 << "SHADOW_BIAS " << shadowBias << "\n"
                  << "WATER_MODE " << waterMode << "\n"
+                 << "WATER_TRANSPARENCY " << waterTransparency << "\n"
+                 << "WATER_WAVE_SPEED " << waterWaveSpeed << "\n"
+                 << "WATER_WAVE_HEIGHT " << waterWaveHeight << "\n"
+                 << "WATER_REFLECTIONS " << enableWaterReflections << "\n"
                  << "ENABLE_FOG " << enableFog << "\n"
+                 << "FOG_DENSITY " << fogDensity << "\n"
+                 << "FOG_COLOR_R " << fogColor.r << "\n"
+                 << "FOG_COLOR_G " << fogColor.g << "\n"
+                 << "FOG_COLOR_B " << fogColor.b << "\n"
+                 << "FOG_HEIGHT_FALLOFF " << fogHeightFalloff << "\n"
                  << "FACE_SHADING " << enableDirectionalFaceShading << "\n"
                  << "AMBIENT_BRIGHTNESS " << ambientBrightness << "\n"
                  << "DAY_SPEED " << dayTimeSpeed << "\n"
@@ -180,7 +222,14 @@ namespace Config {
                  << "CONTRAST " << contrast << "\n"
                  << "SUN_SIZE " << sunSize << "\n"
                  << "SUN_INTENSITY " << sunIntensity << "\n"
+                 << "SUN_COLOR_R " << sunColor.r << "\n"
+                 << "SUN_COLOR_G " << sunColor.g << "\n"
+                 << "SUN_COLOR_B " << sunColor.b << "\n"
+                 << "MOON_SIZE " << moonSize << "\n"
+                 << "MOON_INTENSITY " << moonIntensity << "\n"
                  << "GOD_RAYS_INTENSITY " << godRaysIntensity << "\n"
+                 << "STAR_DENSITY " << starDensity << "\n"
+                 << "MILKY_WAY_INTENSITY " << milkyWayIntensity << "\n"
                  << "GRAPHICS_PRESET " << static_cast<int>(graphicsPreset) << "\n"
                  << "PLAYER_SPEED " << playerSpeed << "\n"
                  << "SPRINT_SPEED " << playerSprintSpeed << "\n"

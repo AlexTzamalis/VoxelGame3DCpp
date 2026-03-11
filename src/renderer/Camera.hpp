@@ -90,7 +90,7 @@ private:
     float aspect_ = 16.0f / 9.0f;
     float fov_ = 60.0f;
     float near_ = 0.1f;
-    float far_ = 5000.0f; 
+    float far_ = 30000.0f; 
 
     // Zoom
     bool isZooming_ = false;

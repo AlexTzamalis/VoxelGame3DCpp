@@ -121,4 +121,15 @@ private:
     std::mutex readyMutex_;
     
     std::unique_ptr<ChunkColumn> generateLODColumn(glm::ivec2 gridPos);
+    
+    // Communal Noise Objects (pre-initialized for worker speed)
+    FastNoiseLite tectonicNoise_;
+    FastNoiseLite erosionNoise_;
+    FastNoiseLite tempNoise_;
+    FastNoiseLite humNoise_;
+    FastNoiseLite densityNoise_;
+    FastNoiseLite caveNoise_;
+    FastNoiseLite clusterNoise_;
+    
+    void initNoise();
 };

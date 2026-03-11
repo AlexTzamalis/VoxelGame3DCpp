@@ -23,10 +23,18 @@ uniform int isUnderwater;
 uniform int enableShaders;
 uniform int enableShadows;
 uniform float shadowIntensity;
+uniform float shadowSoftness;
+uniform float shadowBias;
 uniform int enableFog;
+uniform vec3 fogColor;
+uniform float fogHeightFalloff;
 uniform int enableFaceShading;
 uniform float ambientBrightness;
 uniform int waterMode;
+uniform float waterTransparency;
+uniform float waterWaveSpeed;
+uniform float waterWaveHeight;
+uniform int enableWaterReflections;
 uniform int ultraMode;
 uniform float saturation;
 uniform float contrast;
@@ -35,7 +43,12 @@ uniform mat4 lightSpaceMatrix;
 // Atmosphere expansions
 uniform float sunSize;         
 uniform float sunIntensity;    
+uniform vec3 sunColor;
+uniform float moonSize;
+uniform float moonIntensity;
 uniform float godRaysIntensity;
+uniform float starDensity;
+uniform float milkyWayIntensity;
 
 // --- ACES Film Tone Mapping ---
 vec3 ACESFilm(vec3 x) {
@@ -71,7 +84,7 @@ float PCSS(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
     if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
         return 0.0;
     float zReceiver = projCoords.z;
-    float bias = max(0.002 * (1.0 - dot(normal, ld)), 0.0008);
+    float bias = shadowBias;
     float avgBlockerDepth = findBlocker(projCoords.xy, zReceiver);
     if(avgBlockerDepth == -1.0) return 0.0;
     float penumbraSize = (zReceiver - avgBlockerDepth) / avgBlockerDepth;
@@ -95,53 +108,96 @@ float PCSS(vec4 fragPosLightSpace, vec3 normal, vec3 ld) {
     return (shadowCount / float(SAMPLES)) * shadowIntensity;
 }
 
+float reflectNoise(vec3 p) {
+    return fract(sin(dot(p.xz, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
 // --- Photon-Inspired Atmospheric Scattering ---
 vec3 getSkyColor(vec3 dir) {
     vec3 sunD = normalize(lightDir);
     float zenith = max(dir.y, 0.0);
     float sunDot = max(dot(dir, sunD), 0.0);
+    float moonDot = max(dot(dir, -sunD), 0.0);
     float sunsetFact = clamp(1.0 - sunD.y, 0.0, 1.0);
+    float nightFact = smoothstep(0.05, -0.25, sunD.y);
 
     // Rayleigh scattering (Blue sky)
     vec3 zenithCol = vec3(0.01, 0.1, 0.4);
     vec3 horizonCol = vec3(0.4, 0.6, 0.9);
     vec3 skyBase = mix(horizonCol, zenithCol, pow(zenith, 0.6));
     
-    // Ozone Absorption (Adds the distinct twilight 'purple' and deep blue)
+    // Ozone Absorption
     vec3 ozone = vec3(0.5, 0.1, 0.02) * sunsetFact * pow(1.0-zenith, 8.0);
     
-    // Mie scattering & Sunset Glow
+    // Sunset Glow
     vec3 sunsetGlow = vec3(1.0, 0.4, 0.1) * pow(1.0 - abs(dir.y), 4.0) * sunsetFact;
     
-    // Henyey-Greenstein Phase for Sun Glow
-    float g = 0.8; // Forward scattering factor
-    float hg = (1.0 - g*g) / pow(1.0 + g*g - 2.0*g*sunDot, 1.5);
-    vec3 sunGlowCol = vec3(1.0, 0.9, 0.8) * hg * 0.15;
+    // Sun Glow (Halo)
+    float g = 0.76; 
+    float denom = 1.0 + g*g - 2.0*g*sunDot;
+    float hgVal = (1.0 - g*g) / pow(max(denom, 0.001), 1.5);
+    vec3 sunGlowCol = sunColor * hgVal * 0.08;
     
     // Solar Disc
-    float sunDisc = smoothstep(1.0 - sunSize, 1.0 - sunSize * 0.5, sunDot) * sunIntensity;
-    vec3 sunCol = mix(vec3(1.0, 0.98, 0.9), vec3(1.0, 0.35, 0.1), sunsetFact);
+    float sSize = clamp(sunSize, 0.002, 0.04);
+    float sunDisc = smoothstep(cos(sSize), cos(sSize * 0.94), sunDot) * sunIntensity;
+    vec3 currentSunCol = mix(sunColor, vec3(1.0, 0.35, 0.1), sunsetFact);
     
-    vec3 finalSky = skyBase + sunsetGlow - ozone + sunGlowCol + sunDisc * sunCol;
-    
-    // Night transition
-    float nightFact = smoothstep(0.05, -0.25, sunD.y);
-    finalSky = mix(finalSky, vec3(0.002, 0.005, 0.015), nightFact);
+    // Moon
+    float mSize = clamp(moonSize, 0.002, 0.035);
+    float moonDisc = smoothstep(cos(mSize), cos(mSize * 0.94), moonDot) * moonIntensity;
+    vec3 currentMoonCol = vec3(0.9, 0.95, 1.0);
+
+    // Stars & Milky Way
+    vec3 stars = vec3(0.0);
+    if (nightFact > 0.01) {
+        float sNoise = reflectNoise(dir * 200.0);
+        if (sNoise > 1.0 - 0.002 * starDensity) {
+            stars = vec3(1.0) * nightFact * sNoise;
+        }
+        float mw = reflectNoise(dir * 2.0) * 0.1 * milkyWayIntensity;
+        stars += vec3(0.1, 0.15, 0.25) * mw * nightFact;
+    }
+
+    vec3 finalSky = skyBase + sunsetGlow - ozone + sunGlowCol + sunDisc * currentSunCol + moonDisc * currentMoonCol + stars;
+    finalSky = mix(finalSky, vec3(0.001, 0.002, 0.005), nightFact);
     
     return max(vec3(0.0), finalSky);
 }
 
-float reflectNoise(vec3 p) {
-    return fract(sin(dot(p.xz, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
 void main() {
+    vec4 texColor = texture(textureAtlas, TexCoord);
+    if (texColor.a < 0.1) discard;
+
+    // --- Early Shader Bypass (High Performance) ---
+    if (enableShaders == 0) {
+        float simpleFace = 1.0;
+        if (abs(Normal.y) < 0.1) simpleFace = 0.8; // Basic side shading
+        
+        vec3 basicResult = texColor.rgb * VertexColor.rgb * simpleFace * ambientBrightness * 1.5;
+        
+        // Basic Water Tint in Performance Mode
+        bool isWaterBasic = (VertexColor.a > 0.65 && VertexColor.a < 0.75);
+        float alpha = texColor.a;
+        if (isWaterBasic) {
+            basicResult = mix(basicResult, vec3(0.1, 0.4, 0.6), 0.5);
+            alpha = 0.8;
+        }
+
+        // Keep basic fog for depth in performance mode
+        if (enableFog == 1) {
+            float fDist = length(FragPos - cameraPos);
+            float fFactor = smoothstep(fogStart * 0.8, fogEnd, fDist);
+            basicResult = mix(basicResult, skyColor, fFactor);
+        }
+
+        FragColor = vec4(basicResult, alpha);
+        return;
+    }
+
     float distValue = length(FragPos - cameraPos);
     vec3 viewDir = normalize(cameraPos - FragPos);
     vec3 SD = normalize(lightDir);
-
-    vec4 texColor = texture(textureAtlas, TexCoord);
-    if (texColor.a < 0.1) discard;
     
     // Smooth Water (VertexColor channels ID)
     bool isWater = (VertexColor.a > 0.65 && VertexColor.a < 0.75);
@@ -150,13 +206,12 @@ void main() {
     // Photon Water - Volumetric Extinction (Beer-Lambert)
     if (isWater && waterMode == 1) {
         float depth = distValue; 
-        // Real physical absorption coefficients for water
-        vec3 absorption = vec3(0.4, 0.07, 0.02) * 0.8; 
-        vec3 haze = vec3(0.02, 0.1, 0.2); // Scattering/Murkiness
+        vec3 absorption = vec3(0.4, 0.07, 0.02) * (1.1 - waterTransparency); 
+        vec3 haze = vec3(0.02, 0.1, 0.2); 
         
         vec3 extinction = exp(-absorption * depth * 0.08);
         texColor.rgb = mix(haze, vec3(0.1, 0.4, 0.5), extinction); 
-        texColor.a = 0.96; 
+        texColor.a = 0.8 + 0.18 * waterTransparency; 
     }
 
     vec3 N = normalize(Normal);
@@ -224,29 +279,39 @@ void main() {
     if (isWater && waterMode == 1) {
         vec3 waterN = N;
         if (N.y > 0.9) {
-            float w1 = sin(FragPos.x * 1.5 + time * 1.2) * cos(FragPos.z * 1.5 + time * 0.8);
-            float w2 = sin(FragPos.x * 4.0 - time * 2.2) * cos(FragPos.z * 3.5 - time * 1.8);
-            waterN = normalize(vec3(w1 * 0.03 + w2 * 0.01, 1.0, w1 * 0.02 + w2 * 0.015));
+            float w1 = sin(FragPos.x * 1.5 + time * 1.2 * waterWaveSpeed) * cos(FragPos.z * 1.5 + time * 0.8 * waterWaveSpeed);
+            float w2 = sin(FragPos.x * 4.0 - time * 2.2 * waterWaveSpeed) * cos(FragPos.z * 3.5 - time * 1.8 * waterWaveSpeed);
+            waterN = normalize(vec3(w1 * 0.15 * waterWaveHeight + w2 * 0.05 * waterWaveHeight, 1.0, w1 * 0.1 * waterWaveHeight + w2 * 0.07 * waterWaveHeight));
         }
         vec3 reflectDir = reflect(-viewDir, waterN);
         float specValue = pow(max(dot(reflectDir, SD), 0.0), 512.0) * 4.0;
         float fresnelValue = 0.02 + 0.98 * pow(1.0 - max(dot(viewDir, waterN), 0.0), 5.0);
         
-        vec3 skyRefl = getSkyColor(reflectDir);
-        // Add subtle cloud procedural variation to reflection
-        float cr = reflectNoise(FragPos + reflectDir * 100.0);
-        skyRefl = mix(skyRefl, skyRefl * 1.2, smoothstep(0.4, 0.6, cr) * 0.2);
+        vec3 skyRefl = vec3(0.0);
+        if (enableWaterReflections == 1) {
+            skyRefl = getSkyColor(reflectDir);
+            float cr = reflectNoise(FragPos + reflectDir * 100.0);
+            skyRefl = mix(skyRefl, skyRefl * 1.2, smoothstep(0.4, 0.6, cr) * 0.2);
+        }
 
-        resultColor = mix(resultColor, skyRefl, fresnelValue * 0.85);
+        resultColor = mix(resultColor, skyRefl, fresnelValue * 0.85 * float(enableWaterReflections));
         resultColor += lightColor * specValue * (1.0 - shadowValue) * lightColor;
     }
     
-    // --- Fog (Synced with LOD Distance) ---
+    // --- Fog (Natural Atmospheric Integration) ---
     if (enableFog == 1) {
         float fogFactorValue = smoothstep(fogStart, fogEnd, distValue);
         
-        // Atmospheric scattering integrated into fog
-        vec3 targetFogColor = getSkyColor(-viewDir); 
+        // Dynamic Height Fog: denser near ground (64), clears as you climb
+        float hRelative = FragPos.y - 64.0;
+        float hFog = clamp(exp(-hRelative * fogHeightFalloff), 0.0, 1.0);
+        
+        // Blend fog factor: distance-based is primary, height-based adds atmosphere
+        fogFactorValue = max(fogFactorValue, hFog * 0.15); // Subtle baseline haze
+        
+        // IMPORTANT: targetFogColor matches the sky at the horizon exactly
+        vec3 fogDir = normalize(FragPos - cameraPos);
+        vec3 targetFogColor = getSkyColor(fogDir);
         
         // Underwater murky fog override
         if (isUnderwater == 1) {
